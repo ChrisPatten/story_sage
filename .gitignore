@@ -1,0 +1,7 @@
+.python-version
+__pycache__/
+*.pkl
+*.txt
+*.epub
+.ds_store
+config.yml
