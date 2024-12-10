@@ -5,3 +5,4 @@ __pycache__/
 *.epub
 .ds_store
 config.yml
+*.faiss
