@@ -6,3 +6,6 @@ __pycache__/
 .ds_store
 config.yml
 *.faiss
+chunks/
+chroma_data/
+booknlp/output/
