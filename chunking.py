@@ -1,39 +1,22 @@
 #pip install --no-cache-dir jupyter langchain_openai langchain_community langchain langgraph faiss-cpu sentence-transformers ipywidgets transformers nltk scikit-learn matplotlib
 
-CREATE_CHUNKS = True
+CREATE_CHUNKS = False
 USE_CHROMA = True
 
 import os
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-import faiss
-from langchain_community.vectorstores import FAISS, InMemoryVectorStore
 from langchain_core.documents import Document
-from sentence_transformers import SentenceTransformer
-import numpy as np
-import yaml
-import ipywidgets as widgets
-from IPython.display import display
-import httpx
 import torch
 import pickle
 from tqdm import tqdm
 import glob
 from collections import OrderedDict
 import re
-from uuid import uuid4
-import chromadb
-from chromadb import Documents, EmbeddingFunction, Embeddings
+from nltk.tokenize import sent_tokenize
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
 
-if torch.backends.mps.is_available():
-    device = torch.device('mps')
-    print('MPS backend available')
-else:
-    device = torch.device('cpu')
-    print('MPS backend not available. Using CPU')
-
-#tokenizer = SentenceTransformer('multi-qa-mpnet-base-dot-v1')
-tokenizer = SentenceTransformer('all-MiniLM-L6-v2')
-tokenizer = tokenizer.to(device)
+file_path = './books/04*.txt'
 
 """
 Text Chunking Utility
@@ -50,17 +33,11 @@ Requirements:
     - matplotlib
 """
 
-import nltk
-from nltk.tokenize import sent_tokenize
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
-
-
 class TextChunker:
     def __init__(self, model_name='sentence-transformers/all-mpnet-base-v1'):
         """Initialize the TextChunker with a specified sentence transformer model."""
         self.model = SentenceTransformer(model_name)
+        device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
         self.model = self.model.to(device)
 
     def process_file(self, sentences, context_window=1, percentile_threshold=95, min_chunk_size=3):
@@ -192,128 +169,39 @@ def read_text_file(file_path):
             text_dict[fname] = book_info
     return text_dict
 
-file_path = './books/*.txt'
+
 text_dict = read_text_file(file_path)
 doc_collection = []
+
 chunker = TextChunker(model_name='all-MiniLM-L6-v2')
+for book_name, book_info in text_dict.items():
+    book_number = book_info['book_number']
+    for chapter_number, chapter_text in tqdm(book_info['chapters'].items(), desc=f'Processing chapters in {book_name}'):
+        chapter_text_length = len(''.join(chapter_text).replace(' ', ''))
+        if chapter_text_length < 10:
+            continue
+        # Concatenate the elements in chapter_text
+        full_text = ' '.join(chapter_text)
+        chunks = chunker.process_file(
+            full_text,
+            context_window=2,
+            percentile_threshold=85,
+            min_chunk_size=3
+        )
 
-if CREATE_CHUNKS:
-  for book_name, book_info in text_dict.items():
-      book_number = book_info['book_number']
-      for chapter_number, chapter_text in tqdm(book_info['chapters'].items(), desc=f'Processing chapters in {book_name}'):
-          # Concatenate the elements in chapter_text
-          full_text = ' '.join(chapter_text)
-          chunks = chunker.process_file(
-              full_text,
-              context_window=2,
-              percentile_threshold=85,
-              min_chunk_size=3
-          )
+        with open(f'chunks/{book_number}_{chapter_number}.pkl', 'wb') as f:
+            pickle.dump(chunks, f)
 
-          with open(f'chunks/{book_number}_{chapter_number}.pkl', 'wb') as f:
-              pickle.dump(chunks, f)
-
-          #print('Wrote chunks to disk for book', book_number, 'chapter', chapter_number)
-          
-          for chunk in chunks:
-              doc = Document(
+        print('Wrote chunks to disk for book', book_number, 'chapter', chapter_number)
+        
+        for chunk in chunks:
+            doc = Document(
                 page_content=chunk,
                 metadata={
                     'book_number': book_number,
                     'chapter_number': chapter_number
                 }
-              )
-              doc_collection.append(doc)
-          
-          del chunks
-else:
-  print('Load chunks from disk')
-  for file in glob.glob('./chunks/*.pkl'):
-    with open(file, 'rb') as f:
-      chunks = pickle.load(f)
-      book_number, chapter_number = map(int, re.match(r'(\d+)_(\d+)', os.path.basename(file)).groups())
-      for chunk in chunks:
-        doc = Document(
-          page_content=chunk,
-          metadata={
-              'book_number': book_number,
-              'chapter_number': chapter_number
-          }
-        )
-        doc_collection.append(doc)
-      del chunks
-  print('Loaded', len(doc_collection), 'chunks')
-
-del chunker
-
-def encode_documents(doc_collection):
-  # Encode the documents and store the embeddings along with metadata
-  embeddings = []
-  metadata = []
-
-  for doc in tqdm(doc_collection, desc='Encoding documents'):
-    embedding = tokenizer.encode([doc.page_content])[0]
-    embeddings.append(embedding)
-    metadata.append(doc.metadata)
-
-  embeddings = np.array(embeddings)
-
-  # Create and populate the FAISS index
-  index = faiss.IndexFlatIP(embeddings.shape[1])
-  print('Adding embeddings to index...')
-  index.add(embeddings)
-
-  return index, metadata
-
-if USE_CHROMA:
-  
-  class Embedder(EmbeddingFunction):
-    def __init__(self, model_name: str = 'all-MiniLM-L6-v2'):
-      self.model = SentenceTransformer(model_name)
-      self.model = self.model.to(device)
-
-    def __call__(self, input: Documents) -> Embeddings:
-       return self.model.encode(input).tolist()
-    
-    def embed_documents(self, documents: Documents) -> Embeddings:
-       embedded_documents = []
-       for document in tqdm(documents, desc='Embedding documents'):
-          embedded_document = self.model.encode(document)
-          embedded_documents.append(embedded_document)
-       return embedded_documents
-  
-  embedder = Embedder()
-
-  chroma_client = chromadb.PersistentClient(path='./chroma_data')
-
-  vector_store = chroma_client.get_or_create_collection(
-     name="wheel_of_time",
-     embedding_function=embedder
-  )
-
-  with open('merged_characters.pkl', 'rb') as f:
-    character_dict = pickle.load(f)
-  print('Loaded character dictionary')
-
-  uuids = [str(uuid4()) for _ in range(len(doc_collection))]
-
-  documents_to_encode = []
-  document_metadata = []
-
-  for doc in doc_collection:
-    characters_in_doc = set()
-    for key in character_dict.keys():
-      if key in str.lower(doc.page_content):
-        characters_in_doc.add(character_dict[key])
-    for char_id in characters_in_doc:
-       doc.metadata[f'character_{char_id}'] = True
-    documents_to_encode.append(doc.page_content)
-    document_metadata.append(doc.metadata)
-
-
-  # Add documents to Chroma database
-  vector_store.add(
-      documents=documents_to_encode,
-      metadatas=document_metadata,
-      ids=uuids
-  )
+            )
+            doc_collection.append(doc)
+        
+        del chunks
