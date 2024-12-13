@@ -1,7 +1,6 @@
 #pip install --no-cache-dir jupyter langchain_openai langchain_community langchain langgraph faiss-cpu sentence-transformers ipywidgets transformers nltk scikit-learn matplotlib
 
-CREATE_CHUNKS = False
-CREATE_INDEX = False
+CREATE_CHUNKS = True
 USE_CHROMA = True
 
 import os
@@ -193,7 +192,7 @@ def read_text_file(file_path):
             text_dict[fname] = book_info
     return text_dict
 
-file_path = './books/01*.txt'
+file_path = './books/*.txt'
 text_dict = read_text_file(file_path)
 doc_collection = []
 chunker = TextChunker(model_name='all-MiniLM-L6-v2')
@@ -204,22 +203,12 @@ if CREATE_CHUNKS:
       for chapter_number, chapter_text in tqdm(book_info['chapters'].items(), desc=f'Processing chapters in {book_name}'):
           # Concatenate the elements in chapter_text
           full_text = ' '.join(chapter_text)
-          #print(full_text)
-          # Use RecursiveCharacterTextSplitter to semantically chunk the text
-          # text_splitter = RecursiveCharacterTextSplitter(
-          #     chunk_size=384,
-          #     chunk_overlap=100,
-          #     length_function=len
-          # )
-          # chunks = text_splitter.split_text(full_text)
-
           chunks = chunker.process_file(
               full_text,
               context_window=2,
               percentile_threshold=85,
               min_chunk_size=3
           )
-          #print(chunks)
 
           with open(f'chunks/{book_number}_{chapter_number}.pkl', 'wb') as f:
               pickle.dump(chunks, f)
@@ -276,15 +265,6 @@ def encode_documents(doc_collection):
 
   return index, metadata
 
-if CREATE_INDEX:
-  index, index_metadata = encode_documents(doc_collection)
-
-  # Save the index and index_metadata to disk for further use
-  faiss.write_index(index, 'index.faiss')
-  with open('index_metadata.pkl', 'wb') as f:
-    pickle.dump(index_metadata, f)
-  print('Wrote index and metadata to disk')
-
 if USE_CHROMA:
   
   class Embedder(EmbeddingFunction):
@@ -311,11 +291,9 @@ if USE_CHROMA:
      embedding_function=embedder
   )
 
-  with open('character_dict.pkl', 'rb') as f:
+  with open('merged_characters.pkl', 'rb') as f:
     character_dict = pickle.load(f)
   print('Loaded character dictionary')
-
-  doc_collection
 
   uuids = [str(uuid4()) for _ in range(len(doc_collection))]
 
@@ -325,7 +303,7 @@ if USE_CHROMA:
   for doc in doc_collection:
     characters_in_doc = set()
     for key in character_dict.keys():
-      if key in doc.page_content:
+      if key in str.lower(doc.page_content):
         characters_in_doc.add(character_dict[key])
     for char_id in characters_in_doc:
        doc.metadata[f'character_{char_id}'] = True
