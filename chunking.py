@@ -1,5 +1,3 @@
-#pip install --no-cache-dir jupyter langchain_openai langchain_community langchain langgraph faiss-cpu sentence-transformers ipywidgets transformers nltk scikit-learn matplotlib
-
 CREATE_CHUNKS = False
 USE_CHROMA = True
 
@@ -34,24 +32,31 @@ Requirements:
 """
 
 class TextChunker:
+    """Class that handles the chunking of text documents into semantically coherent sections."""
+
     def __init__(self, model_name='sentence-transformers/all-mpnet-base-v1'):
-        """Initialize the TextChunker with a specified sentence transformer model."""
+        """
+        Initialize the TextChunker with a specified sentence transformer model.
+
+        Args:
+            model_name (str, optional): The name of the sentence transformer model to use. Defaults to 'sentence-transformers/all-mpnet-base-v1'.
+        """
         self.model = SentenceTransformer(model_name)
         device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
         self.model = self.model.to(device)
 
     def process_file(self, sentences, context_window=1, percentile_threshold=95, min_chunk_size=3):
         """
-        Process a text file and split it into semantically meaningful chunks.
-        
+        Process text and split it into semantically meaningful chunks.
+
         Args:
-            file_path: Path to the text file
-            context_window: Number of sentences to consider on either side for context
-            percentile_threshold: Percentile threshold for identifying breakpoints
-            min_chunk_size: Minimum number of sentences in a chunk
-            
+            sentences (list): List of sentences to process.
+            context_window (int, optional): Number of sentences to consider on either side for context. Defaults to 1.
+            percentile_threshold (int, optional): Percentile threshold for identifying breakpoints. Defaults to 95.
+            min_chunk_size (int, optional): Minimum number of sentences in a chunk. Defaults to 3.
+
         Returns:
-            list: Semantically coherent text chunks
+            list: List of semantically coherent text chunks.
         """
         # Process the text file
         sentences = sent_tokenize(sentences)
@@ -76,7 +81,16 @@ class TextChunker:
         return sent_tokenize(text)
 
     def _add_context(self, sentences, window_size):
-        """Combine sentences with their neighbors for better context."""
+        """
+        Combine sentences with their neighbors for better context.
+
+        Args:
+            sentences (list): List of sentences.
+            window_size (int): Number of neighboring sentences to include.
+
+        Returns:
+            list: List of sentences combined with their context.
+        """
         contextualized = []
         for i in range(len(sentences)):
             start = max(0, i - window_size)
@@ -86,7 +100,15 @@ class TextChunker:
         return contextualized
 
     def _calculate_distances(self, embeddings):
-        """Calculate cosine distances between consecutive embeddings."""
+        """
+        Calculate cosine distances between consecutive sentence embeddings.
+
+        Args:
+            embeddings (list): List of sentence embeddings.
+
+        Returns:
+            list: List of cosine distances between embeddings.
+        """
         if len(embeddings) < 2:
             raise ValueError(f'At least two embeddings are required to calculate distances. Got {len(embeddings)}')
         distances = []
@@ -97,12 +119,30 @@ class TextChunker:
         return distances
 
     def _identify_breakpoints(self, distances, threshold_percentile):
-        """Find natural breaking points in the text based on semantic distances."""
+        """
+        Identify natural breaking points in the text based on semantic distances.
+
+        Args:
+            distances (list): List of cosine distances between embeddings.
+            threshold_percentile (float): Percentile threshold to identify breakpoints.
+
+        Returns:
+            list: Indices of sentences where breakpoints occur.
+        """
         threshold = np.percentile(distances, threshold_percentile)
         return [i for i, dist in enumerate(distances) if dist > threshold]
 
     def _create_chunks(self, sentences, breakpoints):
-        """Create initial text chunks based on identified breakpoints."""
+        """
+        Create initial text chunks based on identified breakpoints.
+
+        Args:
+            sentences (list): List of sentences.
+            breakpoints (list): Indices where breakpoints occur.
+
+        Returns:
+            list: Initial list of text chunks.
+        """
         chunks = []
         start_idx = 0
         
@@ -118,7 +158,17 @@ class TextChunker:
         return chunks
 
     def _merge_small_chunks(self, chunks, embeddings, min_size):
-        """Merge small chunks with their most similar neighbor."""
+        """
+        Merge small chunks with their most similar neighbor to enhance coherence.
+
+        Args:
+            chunks (list): List of initial text chunks.
+            embeddings (list): List of embeddings corresponding to the chunks.
+            min_size (int): Minimum acceptable chunk size.
+
+        Returns:
+            list: Optimized list of text chunks.
+        """
         final_chunks = [chunks[0]]
         merged_embeddings = [embeddings[0]]
         
@@ -146,6 +196,15 @@ class TextChunker:
         return final_chunks
 
 def read_text_file(file_path):
+    """
+    Read text files from the specified file path and organize them into a structured dictionary.
+
+    Args:
+        file_path (str): File path pattern to read text files from.
+
+    Returns:
+        OrderedDict: Ordered dictionary containing book information and text content.
+    """
     text_dict = OrderedDict()
     for file in glob.glob(file_path):
         fname = os.path.basename(file)

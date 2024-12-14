@@ -4,8 +4,19 @@ import chromadb
 
 
 class StorySageRetriever:
+    """Class responsible for retrieving relevant chunks of text based on the user's query."""
+
     def __init__(self, chroma_path: str, chroma_collection_name: str,
                  character_dict: dict, n_chunks: int = 5):
+        """
+        Initialize the StorySageRetriever instance.
+
+        Args:
+            chroma_path (str): Path to the Chroma database.
+            chroma_collection_name (str): Name of the Chroma collection.
+            character_dict (dict): Dictionary containing character information.
+            n_chunks (int, optional): Number of chunks to retrieve. Defaults to 5.
+        """
         
         self.embedder = StorySageEmbedder()
         self.chroma_client = chromadb.PersistentClient(path=chroma_path)
@@ -18,6 +29,18 @@ class StorySageRetriever:
 
     def retrieve_chunks(self, query_str, book_number: int = None,
                         chapter_number: int = None, characters: List[str] = []) -> List[str]:
+        """
+        Retrieve chunks of text relevant to the query and filtering parameters.
+
+        Args:
+            query_str (str): The user's query.
+            book_number (int, optional): Book number for context filtering.
+            chapter_number (int, optional): Chapter number for context filtering.
+            characters (List[str], optional): List of characters to filter by.
+
+        Returns:
+            List[str]: Retrieved documents containing relevant context.
+        """
         
         # configure book and chapter filter
         book_chapter_filter = {
