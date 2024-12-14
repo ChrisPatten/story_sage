@@ -70,17 +70,17 @@ if __name__ == '__main__':
     chroma_client = chromadb.PersistentClient(path='./chroma_data')
     embedder = Embedder()
     vector_store = chroma_client.get_or_create_collection(
-        name="wheel_of_time",
+        name="sherlock_holmes",
         embedding_function=embedder
     )
     print('Created vector store')
 
-    with open('merged_characters.pkl', 'rb') as f:
+    with open('./characters/sherlock_holmes_characters.pkl', 'rb') as f:
         character_dict = pickle.load(f)
     print('Loaded character dictionary')
 
     print('Load chunks from disk')
-    for file in glob.glob('./chunks/*.pkl'):
+    for file in glob.glob('./chunks/sherlock_holmes/*.pkl'):
         print(f'Embedding documents from {file}')
         doc_collection = load_chunk_from_disk(file)
         embed_documents(doc_collection, character_dict, vector_store)

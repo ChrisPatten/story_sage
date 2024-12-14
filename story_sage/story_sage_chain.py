@@ -1,5 +1,5 @@
 
-from langgraph.graph import START, StateGraph
+from langgraph.graph import START, END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langchain_openai import ChatOpenAI
 from langchain import PromptTemplate
@@ -8,9 +8,8 @@ from .story_sage_retriever import StorySageRetriever
 import httpx
 
 
-class StorySageChain(CompiledStateGraph):
-  def __init__(self, api_key: str, state: StorySageState, character_dict: dict, retriever: StorySageRetriever):
-    self.state = state
+class StorySageChain(StateGraph):
+  def __init__(self, api_key: str, character_dict: dict, retriever: StorySageRetriever):
     self.character_dict = character_dict
     self.retriever = retriever
     self.llm = ChatOpenAI(api_key=api_key, model='gpt-4o-mini', http_client = httpx.Client(verify=False))
@@ -36,30 +35,36 @@ class StorySageChain(CompiledStateGraph):
     )
 
 
-    graph_builder = StateGraph(StorySageState).add_sequence([self._get_characters, self._get_context, self._generate])
-    graph_builder.add_edge(START, self._get_characters)
+    graph_builder = StateGraph(StorySageState)
+    graph_builder.add_node("GetCharacters", self.get_characters)
+    graph_builder.add_node("GetContext", self.get_context)
+    graph_builder.add_node("Generate", self.generate)
+    graph_builder.add_edge(START, "GetCharacters")
+    graph_builder.add_edge("GetCharacters", "GetContext")
+    graph_builder.add_edge("GetContext", "Generate")
+    graph_builder.add_edge("Generate", END)
     self.graph = graph_builder.compile()
   
-  def _get_characters(self) -> dict:
+  def get_characters(self, state: StorySageState) -> dict:
     characters_in_question = set()
     for character in self.character_dict:
-      if str.lower(character) in str.lower(self.state['question']):
+      if str.lower(character) in str.lower(state['question']):
         characters_in_question.add(character)
     return {'characters': list(characters_in_question)}
   
-  def _get_context(self) -> dict:
+  def get_context(self, state: StorySageState) -> dict:
     retrieved_docs = self.retriever.retrieve_chunks(
-      query_str=self.state['question'],
-      book_number=self.state['book_number'],
-      chapter_number=self.state['chapter_number'],
-      characters=self.state['characters']
+      query_str=state['question'],
+      book_number=state['book_number'],
+      chapter_number=state['chapter_number'],
+      characters=state['characters']
     )
     return {'context': retrieved_docs}
   
-  def _generate(self) -> dict:
-    docs_content = '\n\n'.join(doc for doc in self.state['context']['documents'][0])
+  def generate(self, state: StorySageState) -> dict:
+    docs_content = '\n\n'.join(doc for doc in state['context']['documents'][0])
     messages = self.prompt.invoke(
-      {'question': self.state['question'], 'context': docs_content}
+      {'question': state['question'], 'context': docs_content}
     )
     response = self.llm.invoke(messages)
     return {'answer': response.content}

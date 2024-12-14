@@ -16,7 +16,7 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 
-file_path = './books/04*.txt'
+file_path = './books/sherlock_holmes/*.txt'
 
 """
 Text Chunking Utility
@@ -87,6 +87,8 @@ class TextChunker:
 
     def _calculate_distances(self, embeddings):
         """Calculate cosine distances between consecutive embeddings."""
+        if len(embeddings) < 2:
+            raise ValueError(f'At least two embeddings are required to calculate distances. Got {len(embeddings)}')
         distances = []
         for i in range(len(embeddings) - 1):
             similarity = cosine_similarity([embeddings[i]], [embeddings[i + 1]])[0][0]
@@ -153,13 +155,13 @@ def read_text_file(file_path):
             book_info = {'book_number': book_number, 'chapters': {0: []}}
             # Remove any line breaks between the word "chapter" and following digits
             content = f.read()
-            content = re.sub(r'(CHAPTER)\s+(\d+)', r'\1 \2', content, flags=re.IGNORECASE)
+            content = re.sub(r'(CHAPTER)\s+(\d+|[IV]+)', r'\1 \2', content, flags=re.IGNORECASE)
             chapter_number = 0
             for line in content.split('\n'):
                 line = line.strip()
                 if len(line) == 0:
                     continue
-                if re.match(r'CHAPTER \d+', line, re.IGNORECASE):
+                if re.match(r'CHAPTER (\d+|[IV]+)', line, re.IGNORECASE):
                     chapter_number += 1
                     if chapter_number not in book_info['chapters']:
                         book_info['chapters'][chapter_number] = []
@@ -178,7 +180,7 @@ for book_name, book_info in text_dict.items():
     book_number = book_info['book_number']
     for chapter_number, chapter_text in tqdm(book_info['chapters'].items(), desc=f'Processing chapters in {book_name}'):
         chapter_text_length = len(''.join(chapter_text).replace(' ', ''))
-        if chapter_text_length < 10:
+        if chapter_text_length < 100:
             continue
         # Concatenate the elements in chapter_text
         full_text = ' '.join(chapter_text)
