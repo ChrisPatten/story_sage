@@ -96,7 +96,6 @@ class StorySageRetriever:
         else:
             query_filter = combined_filter
 
-        print(query_filter)
         # query the vector store
         query_result = self.vector_store.query(
             query_texts=[query_str],

@@ -10,3 +10,4 @@ chunks/
 chroma_data/
 booknlp/output/
 !requirements.txt
+series.yml
