@@ -70,11 +70,18 @@
     <div class="chat-container">
         <div class="chat-header">
             <h3><i class="fas fa-comments"></i> Story Sage</h3>
-            <p>Welcome to Story Sage. You can ask questions about the Harry Potter series.</p>
-            <!-- Add input fields for book number and chapter number -->
+            <p>Welcome to Story Sage. Please select a book series.</p>
+            <!-- Update input fields to dropdowns -->
             <div class="d-flex justify-content-center">
-                <input type="number" id="book_number" inputmode="decimal" pattern="[0-9]*" name="book_number" class="form-control mx-2" placeholder="Book Number" min="1">
-                <input type="number" id="chapter_number" inputmode="decimal" pattern="[0-9]*" name="chapter_number" class="form-control mx-2" placeholder="Chapter Number" min="0">
+                <div id="seriesContainer"></div>
+                <div id="bookContainer"></div>
+            </div>
+            <!-- Add chapter slider below the dropdowns -->
+            <div class="d-flex justify-content-center mt-2">
+                <div id="chapterContainer" style="width: 80%;">
+                    <input type="range" id="chapter_number" name="chapter_number" class="form-control-range" min="1" max="1" value="1">
+                    <div class="text-center">Chapter: <span id="chapterLabel">1</span></div>
+                </div>
             </div>
         </div>
         <div class="chat-body" id="chatBody">
@@ -83,7 +90,7 @@
         <div class="chat-footer">
             <form id="storyForm" class="d-flex">
                 <input type="text" id="question" name="question" class="form-control" placeholder="Type your message..." required>
-                <button type="submit" class="btn btn-primary ml-2"><i class="fas fa-paper-plane"></i></button>
+                <button type="submit" id="submit-question" class="btn btn-primary ml-2"><i class="fas fa-paper-plane"></i></button>
             </form>
         </div>
     </div>
@@ -97,65 +104,155 @@
     <!-- Include Bootstrap JS and dependencies -->
     <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
     <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+    <!-- Include Showdown JS -->
     <script src="https://cdn.jsdelivr.net/npm/showdown@1.9.1/dist/showdown.min.js"></script>
+    <!-- Move your custom script here -->
     <script>
-        // Update the script to display messages in the chat interface
-        document.getElementById('storyForm').addEventListener('submit', async function(event) {
-            event.preventDefault();
-            const questionInput = document.getElementById('question');
-            const question = questionInput.value;
-            let book_number = parseInt(document.getElementById('book_number').value, 10);
-            if (isNaN(book_number)) {
-                book_number = 10;
-            }
-            let chapter_number = parseInt(document.getElementById('chapter_number').value, 10);
-            if (isNaN(chapter_number)) {
-                chapter_number = 0;
-            }
+        document.addEventListener('DOMContentLoaded', async function() {
+            // Fetch series metadata from /invoke
+            const response = await fetch('/invoke', { method: 'GET' });
+            const seriesData = await response.json();
 
-            // Append user's message
-            const chatBody = document.getElementById('chatBody');
-            const userMessage = document.createElement('div');
-            userMessage.classList.add('chat-message', 'user');
-            userMessage.innerHTML = `<div class="message-text">${question}</div>`;
-            chatBody.appendChild(userMessage);
-            chatBody.scrollTop = chatBody.scrollHeight;
+            // Load series.yml for mapping (if needed on client-side)
+            // If series.yml is not needed on the client, this part can be omitted
 
-            questionInput.value = '';
+            // Populate series dropdown
+            const seriesSelect = document.createElement('select');
+            seriesSelect.id = 'series_id';
+            seriesSelect.name = 'series_id';
+            seriesSelect.classList.add('form-control', 'mx-2');
+            seriesSelect.innerHTML = '<option value="" disabled selected>Select Series</option>';
 
-            // Show processing indicator
-            const processingMessage = document.createElement('div');
-            processingMessage.classList.add('chat-message', 'bot');
-            processingMessage.innerHTML = `<div class="message-text">Processing your question...</div>`;
-            chatBody.appendChild(processingMessage);
-            chatBody.scrollTop = chatBody.scrollHeight;
-
-            const response = await fetch('/invoke', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ 
-                    question, 
-                    book_number, 
-                    chapter_number,
-                    series_id: 0
-                })
+            seriesData.forEach(series => {
+                const option = document.createElement('option');
+                option.value = series.series_id;
+                option.textContent = series.series_name;
+                seriesSelect.appendChild(option);
             });
 
-            const result = await response.json();
+            // Insert series dropdown into the header
+            const seriesContainer = document.getElementById('seriesContainer');
+            seriesContainer.appendChild(seriesSelect);
 
-            // Remove processing indicator
-            chatBody.removeChild(processingMessage);
+            // Create book dropdown
+            const bookSelect = document.createElement('select');
+            bookSelect.id = 'book_number';
+            bookSelect.name = 'book_number';
+            bookSelect.classList.add('form-control', 'mx-2');
+            bookSelect.innerHTML = '<option value="" disabled selected>Select Book</option>';
 
-            // Append bot's response
-            const botMessage = document.createElement('div');
-            botMessage.classList.add('chat-message', 'bot');
-            const converter = new showdown.Converter();
-            const html = converter.makeHtml(result);
-            botMessage.innerHTML = `<div class="message-text">${html}</div>`;
-            chatBody.appendChild(botMessage);
-            chatBody.scrollTop = chatBody.scrollHeight;
+            // Insert book dropdown into the header
+            const bookContainer = document.getElementById('bookContainer');
+            bookContainer.appendChild(bookSelect);
+
+            // Create chapter slider elements
+            const chapterSlider = document.getElementById('chapter_number');
+            const chapterLabel = document.getElementById('chapterLabel');
+            const chapterContainer = document.getElementById('chapterContainer');
+
+            // Populate book dropdown when a series is selected
+            seriesSelect.addEventListener('change', function() {
+                const selectedSeries = seriesData.find(s => s.series_id == seriesSelect.value);
+
+                // Clear previous book options
+                bookSelect.innerHTML = '<option value="" disabled selected>Select Book</option>';
+
+                selectedSeries.books.forEach(book => {
+                    const option = document.createElement('option');
+                    option.value = book.number_in_series;
+                    option.textContent = book.title;
+                    bookSelect.appendChild(option);
+                });
+
+                // Reset chapter slider
+                chapterSlider.max = 1;
+                chapterSlider.value = 1;
+                chapterLabel.textContent = '1';
+                chapterContainer.style.display = 'none';
+            });
+
+            bookSelect.addEventListener('change', function() {
+                const selectedSeries = seriesData.find(s => s.series_id == seriesSelect.value);
+                const selectedBook = selectedSeries.books.find(b => b.number_in_series == bookSelect.value);
+                // Update chapter slider max value
+                const maxChapters = selectedBook.number_of_chapters;
+                chapterSlider.max = maxChapters;
+                chapterSlider.value = 1;
+                chapterLabel.textContent = '1';
+                chapterContainer.style.display = 'block';
+            });
+
+            // Update chapter label when slider value changes
+            chapterSlider.addEventListener('input', function() {
+                chapterLabel.textContent = chapterSlider.value;
+            });
+
+            // Hide chapter slider initially
+            chapterContainer.style.display = 'none';
+
+            // Update form submission to include selected series and book
+            document.getElementById('storyForm').addEventListener('submit', async function(event) {
+                event.preventDefault();
+                const questionInput = document.getElementById('question');
+                const question = questionInput.value;
+                let series_id = parseInt(document.getElementById('series_id').value, 10);
+                if (isNaN(series_id)) {
+                    alert('Please select a series.');
+                    return;
+                }
+
+                let book_number = parseInt(document.getElementById('book_number').value, 10);
+                if (isNaN(book_number)) {
+                    alert('Please select a book.');
+                    return;
+                }
+
+                let chapter_number = parseInt(chapterSlider.value, 10);
+
+                // Append user's message
+                const chatBody = document.getElementById('chatBody');
+                const userMessage = document.createElement('div');
+                userMessage.classList.add('chat-message', 'user');
+                userMessage.innerHTML = `<div class="message-text">${question}</div>`;
+                chatBody.appendChild(userMessage);
+                chatBody.scrollTop = chatBody.scrollHeight;
+
+                questionInput.value = '';
+
+                // Show processing indicator
+                const processingMessage = document.createElement('div');
+                processingMessage.classList.add('chat-message', 'bot');
+                processingMessage.innerHTML = `<div class="message-text">Processing your question...</div>`;
+                chatBody.appendChild(processingMessage);
+                chatBody.scrollTop = chatBody.scrollHeight;
+
+                const response = await fetch('/invoke', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        question, 
+                        book_number, 
+                        chapter_number,
+                        series_id
+                    })
+                });
+
+                const result = await response.json();
+
+                // Remove processing indicator
+                chatBody.removeChild(processingMessage);
+
+                // Append bot's response
+                const botMessage = document.createElement('div');
+                botMessage.classList.add('chat-message', 'bot');
+                const converter = new showdown.Converter();
+                const html = converter.makeHtml(result);
+                botMessage.innerHTML = `<div class="message-text">${html}</div>`;
+                chatBody.appendChild(botMessage);
+                chatBody.scrollTop = chatBody.scrollHeight;
+            });
         });
     </script>
 </body>

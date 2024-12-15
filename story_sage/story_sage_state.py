@@ -8,3 +8,4 @@ class StorySageState(TypedDict):
     chapter_number: int
     n_chunks: int
     characters: List[str]
+    series_name: str

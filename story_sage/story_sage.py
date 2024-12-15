@@ -22,7 +22,7 @@ class StorySage():
         self.chain = StorySageChain(api_key, character_dict, self.retriever)
 
     def invoke(self, question: str, book_number: int = 100, 
-               chapter_number: int = 0, series_id: int = 0):
+               chapter_number: int = 0, series_name: str = None) -> tuple:
         """
         Invoke the Story Sage system with a question and context parameters.
 
@@ -40,6 +40,7 @@ class StorySage():
         self.state['chapter_number'] = chapter_number
         self.state['context'] = None
         self.state['answer'] = None
+        self.state['series_name'] = series_name
         result = self.chain.graph.invoke(self.state)
         self.state['context'] = result['context']
         self.state['answer'] = result['answer']

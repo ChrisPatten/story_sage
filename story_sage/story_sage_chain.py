@@ -1,7 +1,6 @@
 from langgraph.graph import START, END, StateGraph
-from langgraph.graph.state import CompiledStateGraph
 from langchain_openai import ChatOpenAI
-from langchain import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from .story_sage_state import StorySageState
 from .story_sage_retriever import StorySageRetriever
 import httpx
@@ -34,6 +33,7 @@ class StorySageChain(StateGraph):
                 * If you don't know the answer or aren't sure, just say that you don't know. 
                 * Don't provide any irrelevant information.
                 * Use bullet points to provide excerpts from the context that support your answer. Reference the book and chapter whenever you include an excerpt.
+                * If there is no context, you can say that you don't have enough information to answer the question.
 
                 Question: {question} 
                 Context: {context} 
@@ -53,7 +53,7 @@ class StorySageChain(StateGraph):
   
     def get_characters(self, state: StorySageState) -> dict:
         """
-        Extract characters mentioned in the user's question.
+        Extract characters mentioned in the user's question, filtered by series.
 
         Args:
             state (StorySageState): The current state of the system.
@@ -61,10 +61,21 @@ class StorySageChain(StateGraph):
         Returns:
             dict: A dictionary with the list of characters found.
         """
-        characters_in_question = set()
-        for character in self.character_dict:
-            if str.lower(character) in str.lower(state['question']):
-                characters_in_question.add(character)
+        if state.get('series_name'):
+            # Retrieve characters for the specified series
+            series_name = state.get('series_name')
+            series_characters = self.character_dict.get(series_name, {})
+            characters_in_question = set()
+            for character in series_characters:
+                if character.lower() in state['question'].lower():
+                    characters_in_question.add(character)
+        else:
+            # Existing logic without series filtering
+            characters_in_question = set()
+            for character in self.character_dict:
+                if character.lower() in state['question'].lower():
+                    characters_in_question.add(character)
+
         return {'characters': list(characters_in_question)}
   
     def get_context(self, state: StorySageState) -> dict:
@@ -81,7 +92,8 @@ class StorySageChain(StateGraph):
             query_str=state['question'],
             book_number=state['book_number'],
             chapter_number=state['chapter_number'],
-            characters=state['characters']
+            characters=state['characters'],
+            series_name=state['series_name']
         )
         context = [
             f"book number: {meta['book_number']}, chapter: {meta['chapter_number']}, excerpt: {doc}"
