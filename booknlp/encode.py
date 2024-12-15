@@ -26,9 +26,9 @@ def extract_characters(file, book_name, output_dir, char_output_dir):
 
 # File within this directory will be named ${book_id}.entities, ${book_id}.tokens, etc.
 
-output_directory="./output/sherlock_holmes"
-char_output_dir="../characters/sherlock_holmes"
-for file in glob.glob('../books/sherlock_holmes/*.txt'):
+output_directory="./output/harry_potter"
+char_output_dir="../characters/harry_potter"
+for file in glob.glob('../books/harry_potter/*.txt'):
 	print(f'Extracting characters from {file}')
 	book_name = file.split('/')[-1].replace('.txt', '')
 	extract_characters(file, book_name, output_directory, char_output_dir)

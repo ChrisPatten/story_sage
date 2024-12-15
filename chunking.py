@@ -14,7 +14,9 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 
-file_path = './books/sherlock_holmes/*.txt'
+SERIES_NAME = 'harry_potter'
+
+file_path = f'./books/{SERIES_NAME}/*.txt'
 
 """
 Text Chunking Utility
@@ -250,7 +252,7 @@ for book_name, book_info in text_dict.items():
             min_chunk_size=3
         )
 
-        with open(f'chunks/{book_number}_{chapter_number}.pkl', 'wb') as f:
+        with open(f'chunks/{SERIES_NAME}/{book_number}_{chapter_number}.pkl', 'wb') as f:
             pickle.dump(chunks, f)
 
         print('Wrote chunks to disk for book', book_number, 'chapter', chapter_number)

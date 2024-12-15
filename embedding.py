@@ -8,6 +8,8 @@ Requirements:
     - sentence-transformers
     - torch
 """
+SERIES_NAME = 'harry_potter'
+
 
 import pickle
 from langchain_core.documents import Document
@@ -104,17 +106,17 @@ if __name__ == '__main__':
     chroma_client = chromadb.PersistentClient(path='./chroma_data')
     embedder = Embedder()
     vector_store = chroma_client.get_or_create_collection(
-        name="sherlock_holmes",
+        name=SERIES_NAME,
         embedding_function=embedder
     )
     print('Created vector store')
 
-    with open('./characters/sherlock_holmes_characters.pkl', 'rb') as f:
+    with open(f'./characters/{SERIES_NAME}_characters.pkl', 'rb') as f:
         character_dict = pickle.load(f)
     print('Loaded character dictionary')
 
     print('Load chunks from disk')
-    for file in glob.glob('./chunks/sherlock_holmes/*.pkl'):
+    for file in glob.glob(f'./chunks/{SERIES_NAME}/*.pkl'):
         print(f'Embedding documents from {file}')
         doc_collection = load_chunk_from_disk(file)
         embed_documents(doc_collection, character_dict, vector_store)

@@ -12,7 +12,7 @@ with open('config.yml', 'r') as file:
 api_key = config['OPENAI_API_KEY']
 chroma_path = config['CHROMA_PATH']
 chroma_collection = config['CHROMA_COLLECTION']
-merged_characters_path = config['MERGED_CHARACTERS_PATH']
+merged_characters_path = f'./characters/{chroma_collection}_characters.pkl'
 
 
 with open(merged_characters_path, 'rb') as f:
@@ -20,7 +20,7 @@ with open(merged_characters_path, 'rb') as f:
 
 story_sage = StorySage(api_key=api_key, chroma_path=chroma_path, 
                        chroma_collection_name=chroma_collection,
-                       character_dict=character_dict, n_chunks=10)
+                       character_dict=character_dict, n_chunks=15)
 
 @app.route('/')
 def index():
@@ -35,5 +35,78 @@ def invoke_story_sage():
     result, context = story_sage.invoke(**data)
     return jsonify(result)
 
+@app.route('/invoke', methods=['GET'])
+def get_series():
+    series = [
+        {
+            'series_id': 2,
+            'series_name': 'Harry Potter',
+            'books': [
+                {
+                    'number_in_series': 1,
+                    'title': "Harry Potter and the Sorcerer's Stone",
+                    'number_of_chapters': 17
+                },
+                {
+                    'number_in_series': 2,
+                    'title': 'Harry Potter and the Chamber of Secrets',
+                    'number_of_chapters': 18
+                },
+                {
+                    'number_in_series': 3,
+                    'title': 'Harry Potter and the Prisoner of Azkaban',
+                    'number_of_chapters': 22
+                },
+                {
+                    'number_in_series': 4,
+                    'title': 'Harry Potter and the Goblet of Fire',
+                    'number_of_chapters': 37
+                },
+                {
+                    'number_in_series': 5,
+                    'title': 'Harry Potter and the Order of the Phoenix',
+                    'number_of_chapters': 38
+                },
+                {
+                    'number_in_series': 6,
+                    'title': 'Harry Potter and the Half-Blood Prince',
+                    'number_of_chapters': 30
+                },
+                {
+                    'number_in_series': 7,
+                    'title': 'Harry Potter and the Deathly Hallows',
+                    'number_of_chapters': 36
+                }
+            ]
+        },
+        {
+            'series_id': 1,
+            'series_name': 'Sherlock Holmes',
+            'books': [
+                {
+                    'number_in_series': 1,
+                    'title': 'A Study in Scarlet',
+                    'number_of_chapters': 14
+                },
+                {
+                    'number_in_series': 2,
+                    'title': 'The Sign of the Four',
+                    'number_of_chapters': 12
+                },
+                {
+                    'number_in_series': 3,
+                    'title': 'The Hound of the Baskervilles',
+                    'number_of_chapters': 15
+                },
+                {
+                    'number_in_series': 4,
+                    'title': 'The Valley of Fear',
+                    'number_of_chapters': 14
+                }
+            ]
+        }
+    ]
+    return jsonify(series)
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(port=5010)
