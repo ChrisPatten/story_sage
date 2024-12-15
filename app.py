@@ -1,9 +1,11 @@
 from flask import Flask, jsonify, request, render_template
+from flask_cors import CORS, cross_origin
 from story_sage.story_sage import StorySage
 import yaml
 import pickle
 
 app = Flask(__name__)
+CORS(app)
 
 # Dummy graph object with an invoke method
 with open('config.yml', 'r') as file:
@@ -20,13 +22,14 @@ with open(merged_characters_path, 'rb') as f:
 
 story_sage = StorySage(api_key=api_key, chroma_path=chroma_path, 
                        chroma_collection_name=chroma_collection,
-                       character_dict=character_dict, n_chunks=15)
+                       character_dict=character_dict, n_chunks=10)
 
 @app.route('/')
 def index():
     return render_template('./index.html')
 
 @app.route('/invoke', methods=['POST'])
+@cross_origin()
 def invoke_story_sage():
     data = request.get_json()
     required_keys = ['question', 'book_number', 'chapter_number', 'series_id']
@@ -36,6 +39,7 @@ def invoke_story_sage():
     return jsonify(result)
 
 @app.route('/invoke', methods=['GET'])
+@cross_origin()
 def get_series():
     series = [
         {
