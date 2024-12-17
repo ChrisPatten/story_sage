@@ -1,6 +1,6 @@
 # Story Sage
 
-![Story Sage Logo](path/to/logo.png)
+![Story Sage Logo](story_sage.png)
 
 ## Table of Contents
 - [Introduction](#introduction)
