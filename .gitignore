@@ -6,8 +6,9 @@ __pycache__/
 .ds_store
 config.yml
 *.faiss
-chunks/
+chunks/*.pkl
 chroma_data/
 booknlp/output/
 !requirements.txt
 series.yml
+logs/*.log*
