@@ -136,11 +136,11 @@ Customize filters and extend functionalities by modifying the `story_sage.py` an
 
 ## Current Issues
 
-**Entity Filtering:** 
+None right now!
 
-I need to make sure all the entities only exist in one category. 
-Currenly something like "Trolloc" is getting picked up as both an animal and a group.
-I need to decide an order of precedence for the entity types.
+## To Do
+
+- [ ] Update content processing to be better organized/parameterized (issue #3)
 
 ## Contributing
 
