@@ -16,19 +16,19 @@
 
 ## Introduction
 
-**Story Sage** is a cutting-edge application that leverages Retrieval-Augmented Generation (RAG) and chain-of-thought logic to allow users to interact with their books seamlessly. Designed to provide insightful conversations without revealing spoilers, Story Sage enhances the reading experience by enabling users to ask questions and receive detailed answers based on the book's content.
+**Story Sage** is a tool that helps users interact with their books through natural conversation. It uses AI to provide relevant answers about book content while avoiding spoilers.
 
 ## Features
 
-- **Interactive Q&A:** Engage in conversations about your books without encountering spoilers.
-- **Semantic Search:** Utilizes advanced embedding models to understand and retrieve relevant information.
+- **Interactive Q&A:** Question and answer system that preserves plot surprises
+- **Semantic Search:** Uses advanced embedding models to understand and retrieve relevant information across book content.
 - **Customizable Filters:** Filter responses based on book, chapter, or specific entities like characters and places.
 - **Persistent Storage:** Stores and retrieves embeddings efficiently using ChromaDB.
 - **Extensible Architecture:** Easily extendable components for additional functionalities.
 
 ## Architecture
 
-Story Sage employs a modular architecture encompassing Retrieval-Augmented Generation (RAG) and chain-of-thought logic to deliver accurate and context-aware responses.
+Story Sage uses a modular architecture with Retrieval-Augmented Generation (RAG) and chain-of-thought logic to deliver accurate and context-aware responses.
 
 ```
 +------------------+          +------------------+
@@ -155,4 +155,6 @@ For major changes, please open an issue first to discuss what you would like to 
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](LICENSE.md).
+
+It was created with the help of GitHub Copilot and [Connor Tyrell](https://github.com/angusmccloud/story-sage)
