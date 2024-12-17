@@ -42,13 +42,16 @@ class StorySageStepback:
         Returns:
             Optional[str]: The optimized query or None if optimization fails.
         """
-        self.logger.debug(f"Optimizing query: {query}")
-        try:
-            messages = self.prompt.invoke({'query': query})
-            response = self.llm.invoke(messages)
-            optimized_query = response.content.strip()
-            self.logger.debug(f"Optimized query: {optimized_query}")
-            return optimized_query
-        except Exception as e:
-            self.logger.error(f"Failed to optimize query: {e}")
-            return None
+        if False: # Disable this for now until I tune it more to get value from it
+            self.logger.debug(f"Optimizing query: {query}")
+            try:
+                messages = self.prompt.invoke({'query': query})
+                response = self.llm.invoke(messages)
+                optimized_query = response.content.strip()
+                self.logger.debug(f"Optimized query: {optimized_query}")
+                return optimized_query
+            except Exception as e:
+                self.logger.error(f"Failed to optimize query: {e}")
+                return None
+        else:
+            return query

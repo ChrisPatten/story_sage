@@ -80,7 +80,7 @@ class StorySageRetriever:
                     entity_filters.append({entity: True})
 
         # Combine entity filters if any exist
-        if entity_filters:
+        if entity_filters and False: # Disable entity filtering for now while I fix entity lookup
             if len(entity_filters) == 1:
                 entity_meta_filter = entity_filters[0]
             else:
@@ -90,7 +90,6 @@ class StorySageRetriever:
             combined_filter = {'$and': [combined_filter, entity_meta_filter]} if combined_filter else entity_meta_filter
 
         # Log the combined filter being used for the query
-        self.logger.info(f"Combined filter: {combined_filter}")
         self.logger.debug(f"Combined filter: {combined_filter}")
 
         # Query the vector store with the combined filter and retrieve the results
