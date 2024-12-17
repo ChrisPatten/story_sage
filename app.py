@@ -6,46 +6,46 @@ import pickle
 import glob
 import os
 import re
+import logging
+from logging.handlers import TimedRotatingFileHandler
+import warnings
+
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 app = Flask(__name__)
 CORS(app)
 
-# Dummy graph object with an invoke method
-with open('config.yml', 'r') as file:
-    config = yaml.safe_load(file)
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)  # Default level, can be made configurable
+
+log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+os.makedirs('logs', exist_ok=True)
+log_handler = TimedRotatingFileHandler('logs/story_sage.log', when='midnight', backupCount=30)
+log_handler.setFormatter(log_formatter)
+logger.addHandler(log_handler)
+
+try:
+    with open('config.yml', 'r') as file:
+        config = yaml.safe_load(file)
+    with open('series.yml', 'r') as file:
+        series_list = yaml.safe_load(file)
+    with open('entities.json', 'r') as file:
+        entities = yaml.safe_load(file)
+except Exception as e:
+    logger.error(f"Failed to load configuration: {e}")
+    raise
 
 api_key = config['OPENAI_API_KEY']
 chroma_path = config['CHROMA_PATH']
 chroma_collection = config['CHROMA_COLLECTION']
 
-# Load series.yml to create a mapping from series_metadata_name to series_id
-with open('series.yml', 'r') as file:
-    series_list = yaml.safe_load(file)
-metadata_to_id = {series['series_metadata_name']: series['series_id'] for series in series_list}
-
-# Load all character dictionaries and merge them using the metadata_to_id mapping
-character_dict = {}
-for filepath in glob.glob('./characters/*_characters.pkl'):
-    with open(filepath, 'rb') as f:
-        series_characters = pickle.load(f)
-        # Extract series_metadata_name from filename
-        filename = os.path.basename(filepath)
-        match = re.match(r'(.+)_characters\.pkl', filename)
-        if match:
-            series_metadata_name = match.group(1)
-            series_id = metadata_to_id.get(series_metadata_name)
-            if series_id is not None:
-                character_dict[series_id] = series_characters
-            else:
-                print(f'Warning: No series_id found for series_metadata_name "{series_metadata_name}"')
-        else:
-            print(f'Warning: Filename "{filename}" does not match the expected pattern.')
-
 story_sage = StorySage(
     api_key=api_key,
     chroma_path=chroma_path,
     chroma_collection_name=chroma_collection,
-    character_dict=character_dict,
+    entities=entities,
+    series_yml_path='series.yml',
     n_chunks=10
 )
 
@@ -56,27 +56,26 @@ def index():
 @app.route('/invoke', methods=['POST'])
 @cross_origin()
 def invoke_story_sage():
+    logger.info("Received /invoke POST request.")
     data = request.get_json()
     required_keys = ['question', 'book_number', 'chapter_number', 'series_id']
     if not all(key in data for key in required_keys):
+        logger.warning("Missing parameters in /invoke request.")
         return jsonify({'error': f'Missing parameter! Request must include {", ".join(required_keys)}'}), 400
-    
-    # Lookup series_name based on series_id
-    series_id = data.get('series_id')
-    series_entry = next((s for s in series_list if s['series_id'] == series_id), None)
-    if series_entry:
-        data['series_name'] = series_entry['series_metadata_name']
-    else:
-        return jsonify({'error': f'Invalid series_id: {series_id}'}), 400
-    
-    data.pop('series_id', None)
 
-    result, context = story_sage.invoke(**data)
-    return jsonify(result)
+    try:
+        result, context = story_sage.invoke(**data)
+        logger.info("Successfully invoked StorySage.")
+        logger.debug(f"Result: {result}, Context: {context}")
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error invoking StorySage: {e}")
+        return jsonify({'error': 'Internal server error.'}), 500
 
 @app.route('/invoke', methods=['GET'])
 @cross_origin()
 def get_series():
+    logger.info("Received /invoke GET request.")
     return jsonify(series_list)
 
 if __name__ == '__main__':

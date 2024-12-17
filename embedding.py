@@ -18,33 +18,18 @@ import chromadb
 from chromadb import Documents, EmbeddingFunction, Embeddings, Collection
 from sentence_transformers import SentenceTransformer
 import torch
-import tqdm
+from tqdm import tqdm
 import glob
 import os
 import yaml
+import json
 
 # Load series.yml to create a mapping from series_metadata_name to series_id
 with open('series.yml', 'r') as f:
     series_list = yaml.safe_load(f)
-metadata_to_id = {series['series_metadata_name']: series['series_id'] for series in series_list}
 
-# Load all character dictionaries and merge them using the metadata_to_id mapping
-character_dicts = {}
-for filepath in glob.glob('./characters/*_characters.pkl'):
-    with open(filepath, 'rb') as f:
-        series_characters = pickle.load(f)
-        # Extract series_metadata_name from filename
-        filename = os.path.basename(filepath)
-        match = re.match(r'(.+)_characters\.pkl', filename)
-        if match:
-            series_metadata_name = match.group(1)
-            series_id = metadata_to_id.get(series_metadata_name)
-            if series_id is not None:
-                character_dicts[series_id] = series_characters
-            else:
-                print(f'Warning: No series_id found for series_metadata_name "{series_metadata_name}"')
-        else:
-            print(f'Warning: Filename "{filename}" does not match the expected pattern.')
+with open('entities.json', 'r') as f:
+    entities = json.load(f)
 
 def load_chunk_from_disk(file_path: str) -> List[Document]:
     """Load text from pkl and create Document."""
@@ -55,12 +40,7 @@ def load_chunk_from_disk(file_path: str) -> List[Document]:
         filename = os.path.basename(file_path)
         match = re.match(r'(\d+)_(\d+)', filename)
         if match:
-            series_metadata_name = match.group(1)
             book_number, chapter_number = map(int, match.groups())
-            series_id = metadata_to_id.get(series_metadata_name)
-            if series_id is None:
-                print(f'Warning: No series_id found for series_metadata_name "{series_metadata_name}"')
-                return doc_collection
         else:
             print(f'Warning: Filename "{filename}" does not match the expected pattern.')
             return doc_collection
@@ -70,8 +50,7 @@ def load_chunk_from_disk(file_path: str) -> List[Document]:
                 page_content=chunk,
                 metadata={
                     'book_number': book_number,
-                    'chapter_number': chapter_number,
-                    'series_id': series_id
+                    'chapter_number': chapter_number
                 }
             )
             doc_collection.append(doc)
@@ -109,8 +88,8 @@ class Embedder(EmbeddingFunction):
             embedded_documents.append(embedded_document)
         return embedded_documents
 
-def embed_documents(doc_collection: List[Document], character_dict: dict, 
-                    vector_store: Collection, series_name: str) -> None:
+def embed_documents(doc_collection: List[Document], entities: dict, 
+                    vector_store: Collection, series_id: int) -> None:
     """
     Embed documents and add them to the vector store.
 
@@ -120,53 +99,70 @@ def embed_documents(doc_collection: List[Document], character_dict: dict,
         vector_store (Collection): ChromaDB collection to store the embeddings.
         series_name (str): Name of the series to add to the document metadata.
     """
-    uuids = [str(uuid4()) for _ in range(len(doc_collection))]
+    ids = []
     documents_to_encode = []
     document_metadata = []
+    series_metadata_name = next((item['series_metadata_name'] for item in series_list if item['series_id'] == series_id), None)
+    if not series_metadata_name:
+        print(f'Warning: No series_metadata_name found for series_id {series_id}')
+        return
+    series_entities = entities['series'][series_metadata_name]['series_entities']
+    doc_seq = 0
     for doc in doc_collection:
-        characters_in_doc = set()
-        for key in character_dict.keys():
-            if key in str.lower(doc.page_content):
-                characters_in_doc.add(character_dict[key])
-        for char_id in characters_in_doc:
-            doc.metadata[f'character_{char_id}'] = True
-        doc.metadata['series_name'] = series_name
+        book_number = doc.metadata['book_number']
+        chapter_number = doc.metadata['chapter_number']
+        doc.metadata['series_id'] = series_id
+
+        ids.append(f'{series_id}_{book_number}_{chapter_number}_{doc_seq}')
+        doc_seq += 1
+
+        series = entities['series'][series_metadata_name]
+        book = series['books'][book_number - 1]
+        cleaned_page_content = str.lower(doc.page_content.replace('’', "'").replace('‘', "'"))
+        try:
+            entities_in_chapter = next((ch for ch in book['chapters'] if ch['chapter'] == chapter_number), None)
+            if not entities_in_chapter:
+                print(f'Warning: No chapter found for book {book_number} chapter {chapter_number}')
+                return
+        except IndexError:
+            print(f'Warning: No entities found for book {book_number} chapter {chapter_number}')
+            return
+        for name in entities_in_chapter['people']:
+            if name in cleaned_page_content:
+                doc.metadata[series_entities['people_by_name'][name]] = True
+        for name in entities_in_chapter['places']:
+            if name in cleaned_page_content:
+                doc.metadata[series_entities['places_by_name'][name]] = True
+        for name in entities_in_chapter['groups']:
+            if name in cleaned_page_content:
+                doc.metadata[series_entities['groups_by_name'][name]] = True
+        for name in entities_in_chapter['animals']:
+            if name in cleaned_page_content:
+                doc.metadata[series_entities['animals_by_name'][name]] = True
+        
         documents_to_encode.append(doc.page_content)
         document_metadata.append(doc.metadata)
 
     vector_store.add(
         documents=documents_to_encode,
         metadatas=document_metadata,
-        ids=uuids
+        ids=ids
     )
 
 if __name__ == '__main__':
     chroma_client = chromadb.PersistentClient(path='./chroma_data')
     embedder = Embedder()
+    #chroma_client.delete_collection('wot_retriever_test')
     vector_store = chroma_client.get_or_create_collection(
-        name='story_sage',
+        name='wot_retriever_test',
         embedding_function=embedder
     )
     print('Created vector store')
 
     # Iterate over subdirectories in ./chunks
-    for series_dir in glob.glob('./chunks/*'):
+    for series_dir in glob.glob('./chunks/wheel_of_time/semantic_chunks'):
         if os.path.isdir(series_dir):
-            series_name = os.path.basename(series_dir)
-            print(f'Processing series: {series_name}')
-
-            # Map series_name to series_id (assuming the directory name matches series_name in series.yml)
-            series_id = next((s['series_id'] for s in series_list if s['series_name'] == series_name), None)
-            if series_id is None:
-                print(f'Could not find series_id for series: {series_name}')
-                continue
-
-            # Retrieve character dictionary for the series
-            character_dict = character_dicts.get(series_id, {})
-            print(f'Loaded character dictionary for series_id {series_id}')
-
             # Process chunks in the series directory
-            for file in glob.glob(f'{series_dir}/*.pkl'):
-                print(f'Embedding documents from {file}')
+            for file in tqdm(glob.glob(f'{series_dir}/1_*.pkl'), desc='Processing chunks'):
                 doc_collection = load_chunk_from_disk(file)
-                embed_documents(doc_collection, character_dict, vector_store, series_name)
+                embed_documents(doc_collection, entities, vector_store, series_id=3)
