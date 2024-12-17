@@ -52,10 +52,7 @@ class StorySage():
             series_id=series_id or 0,
             context=None,
             answer=None,
-            people=[],
-            places=[],
-            groups=[],
-            animals=[]
+            entities=[]
         )
 
         try:
@@ -70,4 +67,5 @@ class StorySage():
             
         except Exception as e:
             self.logger.error(f"Error processing question: {e}")
+            raise e
             return "I apologize, but I encountered an error processing your question.", []

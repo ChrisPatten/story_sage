@@ -48,10 +48,7 @@ class StorySageRetriever:
         # Log the incoming query and filters for debugging
         self.logger.debug(f"Retrieving chunks with query: {query_str}, context_filters: {context_filters}")
 
-        combined_filter = {}  # Initialize the combined filter dictionary
-
-        # Extract the series ID from context filters
-        series_id = context_filters['series_id']
+        combined_filter = {'series_id': context_filters.get('series_id')}  # Initialize the combined filter dictionary
 
         # Extract book and chapter numbers, if present
         book_number = context_filters.get('book_number')
@@ -69,23 +66,23 @@ class StorySageRetriever:
         }
 
         # Combine filters for book and chapter
-        combined_filter = {'$and': [combined_filter, book_chapter_filter]} if combined_filter else book_chapter_filter
+        combined_filter = {'$and': [combined_filter, book_chapter_filter]}
 
         # Build filters based on entities like people, places, groups, and animals
         entity_filters = []
-        for entity_type in ['people', 'places', 'groups', 'animals']:
-            if entity_type in context_filters and context_filters[entity_type]:
-                for entity in context_filters[entity_type]:
-                    # Add a filter for each entity, ensuring they are included in the metadata
-                    entity_filters.append({entity: True})
+        if len(context_filters.get('entities', [])) > 0:
+            for entity_id in context_filters['entities']:
+                entity_filter = {entity_id: True}
+                entity_filters.append(entity_filter)
 
         # Combine entity filters if any exist
-        if entity_filters and False: # Disable entity filtering for now while I fix entity lookup
-            if len(entity_filters) == 1:
-                entity_meta_filter = entity_filters[0]
-            else:
-                # Use an '$and' clause to require all entity conditions
-                entity_meta_filter = {'$and': entity_filters}
+        if len(entity_filters) == 1:
+            entity_meta_filter = entity_filters[0]
+        elif len(entity_filters) == 0:
+            pass
+        else:
+            # Use an '$and' clause to require all entity conditions
+            entity_meta_filter = {'$and': entity_filters}
             # Add entity filters to the combined filter
             combined_filter = {'$and': [combined_filter, entity_meta_filter]} if combined_filter else entity_meta_filter
 

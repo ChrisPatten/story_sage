@@ -102,43 +102,30 @@ def embed_documents(doc_collection: List[Document], entities: dict,
     ids = []
     documents_to_encode = []
     document_metadata = []
-    series_metadata_name = next((item['series_metadata_name'] for item in series_list if item['series_id'] == series_id), None)
-    if not series_metadata_name:
-        print(f'Warning: No series_metadata_name found for series_id {series_id}')
-        return
-    series_entities = entities['series'][series_metadata_name]['series_entities']
+    series_id_key = str(series_id)
+    series = entities['series'][series_id_key]
+    series_entities = series['series_entities']
     doc_seq = 0
     for doc in doc_collection:
         book_number = doc.metadata['book_number']
         chapter_number = doc.metadata['chapter_number']
         doc.metadata['series_id'] = series_id
 
+        # Generate a unique ID for the document based on the series, book, chapter, and chunk sequence
         ids.append(f'{series_id}_{book_number}_{chapter_number}_{doc_seq}')
         doc_seq += 1
 
-        series = entities['series'][series_metadata_name]
-        book = series['books'][book_number - 1]
-        cleaned_page_content = str.lower(doc.page_content.replace('’', "'").replace('‘', "'"))
-        try:
-            entities_in_chapter = next((ch for ch in book['chapters'] if ch['chapter'] == chapter_number), None)
-            if not entities_in_chapter:
-                print(f'Warning: No chapter found for book {book_number} chapter {chapter_number}')
-                return
-        except IndexError:
-            print(f'Warning: No entities found for book {book_number} chapter {chapter_number}')
-            return
-        for name in entities_in_chapter['people']:
+        cleaned_page_content = ''.join(c for c in str.lower(doc.page_content) if c.isalpha() or c.isspace())
+
+        # Add entities to the document metadata if they exist in the document
+        # Chroma doesn't support "where in" filters so create a metadata field for each entity with value True
+        for name, id in series_entities['people_by_name'].items():
             if name in cleaned_page_content:
-                doc.metadata[series_entities['people_by_name'][name]] = True
-        for name in entities_in_chapter['places']:
+                doc.metadata[id] = True
+
+        for name, id in series_entities['entity_by_name'].items():
             if name in cleaned_page_content:
-                doc.metadata[series_entities['places_by_name'][name]] = True
-        for name in entities_in_chapter['groups']:
-            if name in cleaned_page_content:
-                doc.metadata[series_entities['groups_by_name'][name]] = True
-        for name in entities_in_chapter['animals']:
-            if name in cleaned_page_content:
-                doc.metadata[series_entities['animals_by_name'][name]] = True
+                doc.metadata[id] = True
         
         documents_to_encode.append(doc.page_content)
         document_metadata.append(doc.metadata)

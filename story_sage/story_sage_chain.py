@@ -76,10 +76,9 @@ class StorySageChain(StateGraph):
         """
         self.logger.debug("Extracting characters from question.")
         # Initialize sets to collect entities
-        people_in_question = set()
-        places_in_question = set()
-        groups_in_question = set()
-        animals_in_question = set()
+        entities_in_question = set()
+        # Preprocess question for entity search
+        question_text_search = ''.join(c for c in str.lower(state['question']) if c.isalpha() or c.isspace())
         if state.get('series_id'):
             self.logger.debug("Series ID found in state.")
             # Convert the question to lowercase for case-insensitive search
@@ -91,35 +90,19 @@ class StorySageChain(StateGraph):
                     series_info = series['series_entities']
                     break
             self.logger.debug(f"Series info: {series_info}")
-            # Map entity names to IDs for filtering
-            people_by_name = series_info['people_by_name']
-            places_by_name = series_info['places_by_name']
-            groups_by_name = series_info['groups_by_name']
-            animals_by_name = series_info['animals_by_name']
+            all_entities_by_name = {**series_info['people_by_name'], **series_info['entity_by_name']}
+            all_entities_by_id = {**series_info['people_by_id'], **series_info['entity_by_id']}
             # Check if any entity names are mentioned in the question
-            for name, id in people_by_name.items():
+            for name, id in all_entities_by_name.items():
                 if name in question_text_search:
-                    people_in_question.add(id)
-            for name, id in places_by_name.items():
-                if name in question_text_search:
-                    places_in_question.add(id)
-            for name, id in groups_by_name.items():
-                if name in question_text_search:
-                    groups_in_question.add(id)
-            for name, id in animals_by_name.items():
-                if name in question_text_search:
-                    animals_in_question.add(id)
+                    entities_in_question.add(id)
+
         # Log the entities found
-        self.logger.debug(f'People: {people_in_question}')
-        self.logger.debug(f'Places: {places_in_question}')
-        self.logger.debug(f'Groups: {groups_in_question}')
-        self.logger.debug(f'Animals: {animals_in_question}')
+        entities_strs = ' | '.join([f"{id}: {all_entities_by_id[id]}" for id in entities_in_question])
+        self.logger.debug(f'Entities: {entities_strs}')
         # Return the entities as lists
         return {
-            'people': list(people_in_question),
-            'places': list(places_in_question),
-            'groups': list(groups_in_question),
-            'animals': list(animals_in_question)
+            'entities': list(entities_in_question),
         }
   
     def get_context(self, state: StorySageState) -> dict:
@@ -135,10 +118,7 @@ class StorySageChain(StateGraph):
         self.logger.debug("Retrieving context based on the question and entities.")
         # Set up filters for context retrieval
         context_filters = {
-            'people': state['people'],
-            'places': state['places'],
-            'groups': state['groups'],
-            'animals': state['animals'],
+            'entities': state['entities'],
             'series_id': state['series_id'],
             'book_number': state['book_number'],
             'chapter_number': state['chapter_number']

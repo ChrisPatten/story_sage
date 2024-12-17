@@ -23,17 +23,8 @@ class StorySageState(TypedDict):
     chapter_number: int
     """The chapter number within the book for context filtering."""
 
-    people: List[str]
-    """List of person entity IDs extracted from the question."""
-
-    places: List[str]
-    """List of place entity IDs extracted from the question."""
-
-    groups: List[str]
-    """List of group entity IDs extracted from the question."""
-
-    animals: List[str]
-    """List of animal entity IDs extracted from the question."""
+    entities: List[str]
+    """List of entity IDs extracted from the question."""
 
     series_id: int
     """The ID of the book series for context filtering."""
