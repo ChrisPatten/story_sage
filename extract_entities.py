@@ -11,8 +11,8 @@ with open('config.yml', 'r') as file:
 
 api_key = config['OPENAI_API_KEY']
 
-TARGET_SERIES_ID = 3 # wheel of time
-TARGET_BOOK_NUMBER = 5
+TARGET_SERIES_ID = 2 # harry potter
+TARGET_BOOK_NUMBER = 7
 
 # Load series.yml to create a mapping from series_metadata_name to series_id
 with open('series.yml', 'r') as file:
@@ -23,6 +23,8 @@ target_book_info = next(book for book in target_series_info['books'] if book['nu
 
 series_metadata_name = target_series_info['series_metadata_name']
 book_metadata_name = target_book_info['book_metadata_name']
+
+print(f'Extracting entities for {series_metadata_name} - {book_metadata_name}')
 
 path_to_chunks = f'./chunks/{series_metadata_name}/semantic_chunks'
 chunks = {}

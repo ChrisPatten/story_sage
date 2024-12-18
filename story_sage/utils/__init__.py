@@ -1,1 +1,2 @@
 from .entity_extractor import StorySageEntityExtractor
+from .entity_processor import StorySageEntityProcessor
