@@ -7,12 +7,13 @@ from .story_sage_state import StorySageState
 from .story_sage_retriever import StorySageRetriever
 from .story_sage_stepback import StorySageStepback
 import httpx
+from typing import Optional
 
 
 class StorySageChain(StateGraph):
     """Defines the chain of operations for the Story Sage system."""
 
-    def __init__(self, api_key: str, entities: dict, retriever: StorySageRetriever):
+    def __init__(self, api_key: str, entities: dict, retriever: StorySageRetriever, logger: Optional[logging.Logger] = None):
         """
         Initialize the StorySageChain instance.
 
@@ -20,6 +21,7 @@ class StorySageChain(StateGraph):
             api_key (str): The API key for the language model.
             entities (dict): Dictionary containing character information.
             retriever (StorySageRetriever): The retriever instance for fetching context.
+            logger (Optional[logging.Logger]): Logger instance for logging.
         """
         # Store entities and retriever for later use
         self.entities = entities
@@ -49,7 +51,12 @@ class StorySageChain(StateGraph):
             """
         )
         # Initialize the logger
-        self.logger = logging.getLogger(__name__)
+        if logger:
+            self.logger = logger
+            self.logger.debug('Logger initialized from parent.')
+        else:
+            self.logger = logging.getLogger(__name__)
+            self.logger.debug('Logger initialized locally.')
 
         # Build the state graph for the chain's workflow
         graph_builder = StateGraph(StorySageState)

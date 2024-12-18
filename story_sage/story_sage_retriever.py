@@ -3,12 +3,13 @@ import logging  # For logging debug information
 from .story_sage_embedder import StorySageEmbedder  # Custom embedder class for text embeddings
 from typing import List  # For type annotations
 import chromadb  # ChromaDB client for vector storage and retrieval
+import logging
 
 class StorySageRetriever:
     """Class responsible for retrieving relevant chunks of text based on the user's query."""
 
     def __init__(self, chroma_path: str, chroma_collection_name: str,
-                 entities: dict, n_chunks: int = 5):
+                 entities: dict, n_chunks: int = 5, logger: logging.Logger = None):
         """
         Initialize the StorySageRetriever instance.
 
@@ -32,7 +33,7 @@ class StorySageRetriever:
         # Set the number of chunks to retrieve per query
         self.n_chunks = n_chunks
         # Initialize the logger for this module
-        self.logger = logging.getLogger(__name__)
+        self.logger = logger or logging.getLogger(__name__)
 
     def retrieve_chunks(self, query_str, context_filters: dict) -> List[str]:
         """

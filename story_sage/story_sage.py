@@ -1,12 +1,21 @@
-import chromadb
 import logging
 import yaml
+import uuid
 from typing import Tuple, Optional, Dict, List
 from .story_sage_state import StorySageState
 from .story_sage_retriever import StorySageRetriever
 from .story_sage_chain import StorySageChain
 
-class StorySage():
+class ConditionalRequestIDFormatter(logging.Formatter):
+    """Custom formatter to include request_id only if it's not None."""
+    
+    def format(self, record):
+        if hasattr(record, 'request_id') and record.request_id:
+            original_msg = super().format(record)
+            return f"{original_msg} [Request ID: {record.request_id}]"
+        return super().format(record)
+
+class StorySage:
     """
     Main class for the Story Sage system that helps readers track story elements.
     Coordinates between the retriever, chain, and state management components.
@@ -15,8 +24,28 @@ class StorySage():
     def __init__(self, api_key: str, chroma_path: str, chroma_collection_name: str, 
                  entities: dict, series_yml_path: str, n_chunks: int = 5):
         """Initialize the StorySage instance with necessary components and configuration."""
-        # Initialize components
-        self.logger = logging.getLogger(__name__)
+        # Set up logging
+        self._logger = logging.getLogger(__name__)
+        self._logger.setLevel(logging.DEBUG)
+        self._logger.propagate = False  # Prevent logs from propagating to root logger
+
+        # Create handler for logger
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.DEBUG)
+
+        # Define the custom formatter
+        formatter = ConditionalRequestIDFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+
+        # Add the handler to the logger
+        self._logger.addHandler(handler)
+
+        # Initialize request_id
+        self.request_id = None
+
+        # Create a LoggerAdapter to include class attributes
+        self.logger = logging.LoggerAdapter(self._logger, {'request_id': self.request_id})
+
         self.retriever = StorySageRetriever(chroma_path, chroma_collection_name, entities, n_chunks)
         self.chain = StorySageChain(api_key, entities, self.retriever)
         
@@ -44,6 +73,12 @@ class StorySage():
         """
         self.logger.info(f"Processing question: {question}")
         
+        # Generate and set request_id
+        self.request_id = str(uuid.uuid4())
+        self.logger = logging.LoggerAdapter(self._logger, {'request_id': self.request_id})
+        self.logger.debug(f"Set request_id to {self.request_id}")
+        self.chain.logger = self.logger
+
         # Initialize state with default values
         state = StorySageState(
             question=question,
@@ -67,5 +102,4 @@ class StorySage():
             
         except Exception as e:
             self.logger.error(f"Error processing question: {e}")
-            raise e
-            return "I apologize, but I encountered an error processing your question.", []
+            raise
