@@ -95,8 +95,9 @@ class StorySageChain(StateGraph):
             for series_meta_name, series in self.entities['series'].items():
                 if series['series_id'] == series_id:
                     series_info = series['series_entities']
+                    self.logger.debug(f'Series info found.: {series_info}')
                     break
-            self.logger.debug(f"Series info: {series_info}")
+            #self.logger.debug(f"Series info: {series_info}")
             all_entities_by_name = {**series_info['people_by_name'], **series_info['entity_by_name']}
             all_entities_by_id = {**series_info['people_by_id'], **series_info['entity_by_id']}
             # Check if any entity names are mentioned in the question
@@ -140,6 +141,15 @@ class StorySageChain(StateGraph):
             query_str=optimized_query,
             context_filters=context_filters
         )
+
+        if not retrieved_docs:
+            self.logger.debug("No context retrieved. Rerun without character filters.")
+            context_filters['entities'] = []
+            retrieved_docs = self.retriever.retrieve_chunks(
+                query_str=optimized_query,
+                context_filters=context_filters
+            )
+
         # Format the retrieved context for the prompt
         context = [
             f"Book {meta['book_number']}, Chapter {meta['chapter_number']}: {doc}"

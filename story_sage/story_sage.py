@@ -27,7 +27,7 @@ class StorySage:
         # Set up logging
         self._logger = logging.getLogger(__name__)
         self._logger.setLevel(logging.DEBUG)
-        self._logger.propagate = False  # Prevent logs from propagating to root logger
+        self._logger.propagate = True  # Allow logs to root logger
 
         # Create handler for logger
         handler = logging.StreamHandler()
@@ -47,7 +47,7 @@ class StorySage:
         self.logger = logging.LoggerAdapter(self._logger, {'request_id': self.request_id})
 
         self.retriever = StorySageRetriever(chroma_path, chroma_collection_name, entities, n_chunks)
-        self.chain = StorySageChain(api_key, entities, self.retriever)
+        self.chain = StorySageChain(api_key, entities, self.retriever, self.logger)
         
         # Load series configuration
         try:
@@ -98,7 +98,7 @@ class StorySage:
             self.logger.debug(f"Generated answer: {result['answer']}")
             self.logger.debug(f"Retrieved context: {result['context']}")
             
-            return result['answer'], result['context']
+            return result['answer'], result['context'], self.request_id
             
         except Exception as e:
             self.logger.error(f"Error processing question: {e}")
