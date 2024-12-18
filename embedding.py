@@ -264,7 +264,7 @@ if __name__ == '__main__':
     )
     print('Created vector store')
 
-    series_to_process = [ 1 ]  # Series IDs to process
+    series_to_process = [ 2, 3 ]  # Series IDs to process
 
     # Iterate over subdirectories in ./chunks
     for series_id in series_to_process:
