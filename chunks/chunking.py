@@ -1,4 +1,4 @@
-CREATE_CHUNKS = False
+CREATE_CHUNKS = True
 USE_CHROMA = True
 
 import os
@@ -13,8 +13,9 @@ from nltk.tokenize import sent_tokenize
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
+import json
 
-SERIES_NAME = 'harry_potter'
+SERIES_NAME = 'the_expanse'
 
 file_path = f'./books/{SERIES_NAME}/*.txt'
 
@@ -207,6 +208,12 @@ def read_text_file(file_path):
     Returns:
         OrderedDict: Ordered dictionary containing book information and text content.
     """
+
+    chapter_pattern = re.compile(
+        r'^\s*(CHAPTER)\s+(\d+|\w+)',
+        re.IGNORECASE
+    )
+
     text_dict = OrderedDict()
     for file in glob.glob(file_path):
         fname = os.path.basename(file)
@@ -216,13 +223,13 @@ def read_text_file(file_path):
             book_info = {'book_number': book_number, 'chapters': {0: []}}
             # Remove any line breaks between the word "chapter" and following digits
             content = f.read()
-            content = re.sub(r'(CHAPTER)\s+(\d+|[IV]+)', r'\1 \2', content, flags=re.IGNORECASE)
+            content = re.sub(chapter_pattern, r'\1 \2', content)
             chapter_number = 0
             for line in content.split('\n'):
                 line = line.strip()
                 if len(line) == 0:
                     continue
-                if re.match(r'CHAPTER (\d+|[IV]+)', line, re.IGNORECASE):
+                if re.match(chapter_pattern, line):
                     chapter_number += 1
                     if chapter_number not in book_info['chapters']:
                         book_info['chapters'][chapter_number] = []
@@ -230,6 +237,7 @@ def read_text_file(file_path):
                     break
                 book_info['chapters'][chapter_number].append(line)
             text_dict[fname] = book_info
+            print(f'Book {book_number} has {len(book_info["chapters"])} chapters')
     return text_dict
 
 
@@ -239,7 +247,8 @@ doc_collection = []
 chunker = TextChunker(model_name='all-MiniLM-L6-v2')
 for book_name, book_info in text_dict.items():
     book_number = book_info['book_number']
-    for chapter_number, chapter_text in tqdm(book_info['chapters'].items(), desc=f'Processing chapters in {book_name}'):
+    for chapter_number, chapter_text in book_info['chapters'].items():
+        print('Processing book', book_number, 'chapter', chapter_number)
         chapter_text_length = len(''.join(chapter_text).replace(' ', ''))
         if chapter_text_length < 100:
             continue
@@ -252,8 +261,11 @@ for book_name, book_info in text_dict.items():
             min_chunk_size=3
         )
 
-        with open(f'chunks/{SERIES_NAME}/{book_number}_{chapter_number}.pkl', 'wb') as f:
-            pickle.dump(chunks, f)
+        if not os.path.exists(f'chunks/{SERIES_NAME}'):
+            os.makedirs(f'chunks/{SERIES_NAME}')
+        if not os.path.exists(f'chunks/{SERIES_NAME}/semantic_chunks'):
+            os.makedirs(f'chunks/{SERIES_NAME}/semantic_chunks')
+        json.dump(chunks, open(f'chunks/{SERIES_NAME}/semantic_chunks/{book_number}_{chapter_number}.json', 'w'))
 
         print('Wrote chunks to disk for book', book_number, 'chapter', chapter_number)
         

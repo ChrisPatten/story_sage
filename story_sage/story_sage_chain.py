@@ -1,26 +1,36 @@
+# Import necessary libraries and modules
+import logging
 from langgraph.graph import START, END, StateGraph
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 from .story_sage_state import StorySageState
 from .story_sage_retriever import StorySageRetriever
+from .story_sage_stepback import StorySageStepback
 import httpx
+from typing import Optional
 
 
 class StorySageChain(StateGraph):
     """Defines the chain of operations for the Story Sage system."""
 
-    def __init__(self, api_key: str, character_dict: dict, retriever: StorySageRetriever):
+    def __init__(self, api_key: str, entities: dict, retriever: StorySageRetriever, logger: Optional[logging.Logger] = None):
         """
         Initialize the StorySageChain instance.
 
         Args:
             api_key (str): The API key for the language model.
-            character_dict (dict): Dictionary containing character information.
+            entities (dict): Dictionary containing character information.
             retriever (StorySageRetriever): The retriever instance for fetching context.
+            logger (Optional[logging.Logger]): Logger instance for logging.
         """
-        self.character_dict = character_dict
+        # Store entities and retriever for later use
+        self.entities = entities
         self.retriever = retriever
-        self.llm = ChatOpenAI(api_key=api_key, model='gpt-4o-mini', http_client = httpx.Client(verify=False))
+        # Initialize the Stepback module to optimize queries
+        self.stepback = StorySageStepback(api_key=api_key)
+        # Set up the OpenAI language model with the provided API key
+        self.llm = ChatOpenAI(api_key=api_key, model='gpt-4o-mini', http_client=httpx.Client(verify=False))
+        # Define the prompt template for generating responses
         self.prompt = PromptTemplate(
             input_variables=['question', 'context'],
             template="""
@@ -40,47 +50,72 @@ class StorySageChain(StateGraph):
                 Answer:
             """
         )
+        # Initialize the logger
+        if logger:
+            self.logger = logger
+            self.logger.debug('Logger initialized from parent.')
+        else:
+            self.logger = logging.getLogger(__name__)
+            self.logger.debug('Logger initialized locally.')
 
+        # Build the state graph for the chain's workflow
         graph_builder = StateGraph(StorySageState)
         graph_builder.add_node("GetCharacters", self.get_characters)
         graph_builder.add_node("GetContext", self.get_context)
         graph_builder.add_node("Generate", self.generate)
+        # Define the sequence of operations
         graph_builder.add_edge(START, "GetCharacters")
         graph_builder.add_edge("GetCharacters", "GetContext")
         graph_builder.add_edge("GetContext", "Generate")
         graph_builder.add_edge("Generate", END)
+        # Compile the graph
         self.graph = graph_builder.compile()
   
     def get_characters(self, state: StorySageState) -> dict:
         """
-        Extract characters mentioned in the user's question, filtered by series.
+        Extract entities mentioned in the user's question, filtered by series.
 
         Args:
             state (StorySageState): The current state of the system.
 
         Returns:
-            dict: A dictionary with the list of characters found.
+            dict: A dictionary with lists of entities found in the question.
         """
-        if state.get('series_name'):
-            # Retrieve characters for the specified series
-            series_name = state.get('series_name')
-            series_characters = self.character_dict.get(series_name, {})
-            characters_in_question = set()
-            for character in series_characters:
-                if character.lower() in state['question'].lower():
-                    characters_in_question.add(character)
-        else:
-            # Existing logic without series filtering
-            characters_in_question = set()
-            for character in self.character_dict:
-                if character.lower() in state['question'].lower():
-                    characters_in_question.add(character)
+        self.logger.debug("Extracting characters from question.")
+        # Initialize sets to collect entities
+        entities_in_question = set()
+        # Preprocess question for entity search
+        question_text_search = ''.join(c for c in str.lower(state['question']) if c.isalpha() or c.isspace())
+        if state.get('series_id'):
+            self.logger.debug("Series ID found in state.")
+            # Convert the question to lowercase for case-insensitive search
+            question_text_search = state['question'].lower()
+            series_id = state.get('series_id')
+            # Retrieve series information based on series ID
+            for series_meta_name, series in self.entities['series'].items():
+                if series['series_id'] == series_id:
+                    series_info = series['series_entities']
+                    self.logger.debug(f'Series info found.: {series_info}')
+                    break
+            #self.logger.debug(f"Series info: {series_info}")
+            all_entities_by_name = {**series_info['people_by_name'], **series_info['entity_by_name']}
+            all_entities_by_id = {**series_info['people_by_id'], **series_info['entity_by_id']}
+            # Check if any entity names are mentioned in the question
+            for name, id in all_entities_by_name.items():
+                if name in question_text_search:
+                    entities_in_question.add(id)
 
-        return {'characters': list(characters_in_question)}
+        # Log the entities found
+        entities_strs = ' | '.join([f"{id}: {all_entities_by_id[id]}" for id in entities_in_question])
+        self.logger.debug(f'Entities: {entities_strs}')
+        # Return the entities as lists
+        return {
+            'entities': list(entities_in_question),
+        }
   
     def get_context(self, state: StorySageState) -> dict:
         """
-        Retrieve context based on the user's question and extracted characters.
+        Retrieve relevant context based on the user's question and extracted entities.
 
         Args:
             state (StorySageState): The current state of the system.
@@ -88,22 +123,45 @@ class StorySageChain(StateGraph):
         Returns:
             dict: A dictionary containing the retrieved context.
         """
+        self.logger.debug("Retrieving context based on the question and entities.")
+        # Set up filters for context retrieval
+        context_filters = {
+            'entities': state['entities'],
+            'series_id': state['series_id'],
+            'book_number': state['book_number'],
+            'chapter_number': state['chapter_number']
+        }
+        # Optimize the query or fall back to the original question
+        optimized_query = self.stepback.optimize_query(state['question'])
+        if not optimized_query:
+            self.logger.debug("Failed to optimize query. Using original question.")
+            optimized_query = state['question']
+        # Retrieve chunks of context based on the query and filters
         retrieved_docs = self.retriever.retrieve_chunks(
-            query_str=state['question'],
-            book_number=state['book_number'],
-            chapter_number=state['chapter_number'],
-            characters=state['characters'],
-            series_name=state['series_name']
+            query_str=optimized_query,
+            context_filters=context_filters
         )
+
+        if not retrieved_docs:
+            self.logger.debug("No context retrieved. Rerun without character filters.")
+            context_filters['entities'] = []
+            retrieved_docs = self.retriever.retrieve_chunks(
+                query_str=optimized_query,
+                context_filters=context_filters
+            )
+
+        # Format the retrieved context for the prompt
         context = [
-            f"book number: {meta['book_number']}, chapter: {meta['chapter_number']}, excerpt: {doc}"
+            f"Book {meta['book_number']}, Chapter {meta['chapter_number']}: {doc}"
             for meta, doc in zip(retrieved_docs['metadatas'][0], retrieved_docs['documents'][0])
         ]
+        self.logger.debug(f"Context retrieved: {context}")
+        # Return the context
         return {'context': context}
   
     def generate(self, state: StorySageState) -> dict:
         """
-        Generate an answer based on the user's question and the retrieved context.
+        Generate an answer using the language model based on the question and context.
 
         Args:
             state (StorySageState): The current state of the system.
@@ -111,9 +169,14 @@ class StorySageChain(StateGraph):
         Returns:
             dict: A dictionary containing the generated answer.
         """
+        # Combine context excerpts into a single string
         docs_content = '\n\n'.join(state['context'])
+        # Invoke the prompt with the question and context
         messages = self.prompt.invoke(
             {'question': state['question'], 'context': docs_content}
         )
+        self.logger.debug(f"LLM prompt: {messages}")
+        # Get the response from the language model
         response = self.llm.invoke(messages)
+        # Return the generated answer
         return {'answer': response.content}

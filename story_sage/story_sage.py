@@ -1,47 +1,105 @@
-import chromadb
+import logging
+import yaml
+import uuid
+from typing import Tuple, Optional, Dict, List
 from .story_sage_state import StorySageState
 from .story_sage_retriever import StorySageRetriever
 from .story_sage_chain import StorySageChain
 
-class StorySage():
-    """Class that handles the invocation of the Story Sage system."""
+class ConditionalRequestIDFormatter(logging.Formatter):
+    """Custom formatter to include request_id only if it's not None."""
+    
+    def format(self, record):
+        if hasattr(record, 'request_id') and record.request_id:
+            original_msg = super().format(record)
+            return f"{original_msg} [Request ID: {record.request_id}]"
+        return super().format(record)
 
-    def __init__(self, api_key: str, chroma_path: str, chroma_collection_name: str, character_dict: dict, n_chunks: int = 5):
+class StorySage:
+    """
+    Main class for the Story Sage system that helps readers track story elements.
+    Coordinates between the retriever, chain, and state management components.
+    """
+
+    def __init__(self, api_key: str, chroma_path: str, chroma_collection_name: str, 
+                 entities: dict, series_yml_path: str, n_chunks: int = 5):
+        """Initialize the StorySage instance with necessary components and configuration."""
+        # Set up logging
+        self._logger = logging.getLogger(__name__)
+        self._logger.setLevel(logging.DEBUG)
+        self._logger.propagate = True  # Allow logs to root logger
+
+        # Create handler for logger
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.DEBUG)
+
+        # Define the custom formatter
+        formatter = ConditionalRequestIDFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+
+        # Add the handler to the logger
+        self._logger.addHandler(handler)
+
+        # Initialize request_id
+        self.request_id = None
+
+        # Create a LoggerAdapter to include class attributes
+        self.logger = logging.LoggerAdapter(self._logger, {'request_id': self.request_id})
+
+        self.retriever = StorySageRetriever(chroma_path, chroma_collection_name, entities, n_chunks)
+        self.chain = StorySageChain(api_key, entities, self.retriever, self.logger)
+        
+        # Load series configuration
+        try:
+            with open(series_yml_path, 'r') as file:
+                self.series_dict = yaml.safe_load(file)
+        except Exception as e:
+            self.logger.error(f"Failed to load series configuration: {e}")
+            raise
+
+    def invoke(self, question: str, book_number: int = None, 
+               chapter_number: int = None, series_id: int = None) -> Tuple[str, List[str]]:
         """
-        Initialize the StorySage instance.
+        Process a user's question about the story with optional context parameters.
 
         Args:
-            api_key (str): The API key for the language model.
-            chroma_path (str): File path to the Chroma database.
-            chroma_collection_name (str): Name of the Chroma collection.
-            character_dict (dict): Dictionary containing character information.
-            n_chunks (int, optional): Number of chunks to retrieve. Defaults to 5.
-        """
-        self.state = StorySageState()
-        self.retriever = StorySageRetriever(chroma_path, chroma_collection_name, character_dict, n_chunks)
-        self.chain = StorySageChain(api_key, character_dict, self.retriever)
-
-    def invoke(self, question: str, book_number: int = 100, 
-               chapter_number: int = 0, series_name: str = None) -> tuple:
-        """
-        Invoke the Story Sage system with a question and context parameters.
-
-        Args:
-            question (str): The user's question.
-            book_number (int, optional): Book number for context filtering. Defaults to 100.
-            chapter_number (int, optional): Chapter number for context filtering. Defaults to 0.
-            series_id (int, optional): Series ID for context filtering. Defaults to 0.
+            question: The user's question about the story
+            book_number: Optional book number for context filtering
+            chapter_number: Optional chapter number for context filtering
+            series_id: Optional series ID for context filtering
 
         Returns:
-            tuple: A tuple containing the answer and context.
+            Tuple containing (answer, context_list)
         """
-        self.state['question'] = question
-        self.state['book_number'] = book_number
-        self.state['chapter_number'] = chapter_number
-        self.state['context'] = None
-        self.state['answer'] = None
-        self.state['series_name'] = series_name
-        result = self.chain.graph.invoke(self.state)
-        self.state['context'] = result['context']
-        self.state['answer'] = result['answer']
-        return self.state['answer'], self.state['context']
+        self.logger.info(f"Processing question: {question}")
+        
+        # Generate and set request_id
+        self.request_id = str(uuid.uuid4())
+        self.logger = logging.LoggerAdapter(self._logger, {'request_id': self.request_id})
+        self.logger.debug(f"Set request_id to {self.request_id}")
+        self.chain.logger = self.logger
+
+        # Initialize state with default values
+        state = StorySageState(
+            question=question,
+            book_number=book_number or 100,  # Default to end of series if not specified
+            chapter_number=chapter_number or 0,
+            series_id=series_id or 0,
+            context=None,
+            answer=None,
+            entities=[]
+        )
+
+        try:
+            # Process the question through the chain
+            result = self.chain.graph.invoke(state)
+            
+            # Log the results
+            self.logger.debug(f"Generated answer: {result['answer']}")
+            self.logger.debug(f"Retrieved context: {result['context']}")
+            
+            return result['answer'], result['context'], self.request_id
+            
+        except Exception as e:
+            self.logger.error(f"Error processing question: {e}")
+            raise

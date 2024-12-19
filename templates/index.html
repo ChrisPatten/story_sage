@@ -226,32 +226,58 @@
                 chatBody.appendChild(processingMessage);
                 chatBody.scrollTop = chatBody.scrollHeight;
 
-                const response = await fetch('/invoke', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ 
-                        question, 
-                        book_number, 
-                        chapter_number,
-                        series_id
-                    })
-                });
+                try {
+                    const response = await fetch('/invoke', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ 
+                            question, 
+                            book_number, 
+                            chapter_number,
+                            series_id
+                        })
+                    });
 
-                const result = await response.json();
+                    const result = await response.json();
 
-                // Remove processing indicator
-                chatBody.removeChild(processingMessage);
+                    // Remove processing indicator
+                    chatBody.removeChild(processingMessage);
 
-                // Append bot's response
-                const botMessage = document.createElement('div');
-                botMessage.classList.add('chat-message', 'bot');
-                const converter = new showdown.Converter();
-                const html = converter.makeHtml(result);
-                botMessage.innerHTML = `<div class="message-text">${html}</div>`;
-                chatBody.appendChild(botMessage);
-                chatBody.scrollTop = chatBody.scrollHeight;
+                    if (response.ok) {
+                        // Append bot's response
+                        const botMessage = document.createElement('div');
+                        botMessage.classList.add('chat-message', 'bot');
+                        const converter = new showdown.Converter();
+                        const html = converter.makeHtml(result.result);
+                        botMessage.innerHTML = `<div class="message-text">${html}<br />${result.request_id}</div>`;
+                        chatBody.appendChild(botMessage);
+                        chatBody.scrollTop = chatBody.scrollHeight;
+
+                        // Optional: Handle context and request_id if needed
+                        console.log('Context:', result.context);
+                        console.log('Request ID:', result.request_id);
+                    } else {
+                        // Handle errors returned by the server
+                        const errorMessage = document.createElement('div');
+                        errorMessage.classList.add('chat-message', 'bot');
+                        errorMessage.innerHTML = `<div class="message-text">Error: ${result.error}</div>`;
+                        chatBody.appendChild(errorMessage);
+                        chatBody.scrollTop = chatBody.scrollHeight;
+                    }
+                } catch (error) {
+                    // Remove processing indicator
+                    chatBody.removeChild(processingMessage);
+
+                    // Append error message
+                    const errorMessage = document.createElement('div');
+                    errorMessage.classList.add('chat-message', 'bot');
+                    errorMessage.innerHTML = `<div class="message-text">An unexpected error occurred.</div>`;
+                    chatBody.appendChild(errorMessage);
+                    chatBody.scrollTop = chatBody.scrollHeight;
+                    console.error('Fetch error:', error);
+                }
             });
         });
     </script>
