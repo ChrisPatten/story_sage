@@ -65,6 +65,13 @@ log_handler = TimedRotatingFileHandler('logs/story_sage.log', when='midnight', b
 log_handler.setFormatter(log_formatter)
 logger.addHandler(log_handler)
 
+# Configure feedback logging
+feedback_logger = logging.getLogger('feedback')
+feedback_logger.setLevel(logging.INFO)
+feedback_handler = TimedRotatingFileHandler('logs/feedback.log', when='midnight', backupCount=30)
+feedback_handler.setFormatter(log_formatter)
+feedback_logger.addHandler(feedback_handler)
+
 try:
     # Load configuration and data files
     with open(CONFIG_PATH, 'r') as file:
@@ -202,14 +209,14 @@ def feedback():
         }
     """
     data = request.get_json()
-    required_keys = ['request_id', 'feedback']
+    required_keys = ['request_id', 'feedback', 'type']
     if not all(key in data for key in required_keys):
         # Return an error if any required parameter is missing
         return jsonify({'error': f'Missing parameter! Request must include {", ".join(required_keys)}'}), 400
 
     try:
         # Process the feedback here (e.g., save to a database or log)
-        logger.info(f"Feedback received for request {data['request_id']}: {data['feedback']}")
+        feedback_logger.info(f"Feedback received for request {data['request_id']}|{data['feedback']}|{data['type']}")
         return jsonify({'message': 'Feedback received.'})
     except Exception as e:
         # Log the error and return a server error response
