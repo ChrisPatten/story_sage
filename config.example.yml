@@ -1,0 +1,5 @@
+OPENAI_API_KEY: "sk-1234567890abcdef1234567890abcdef"
+CHROMA_PATH: './chroma_data'
+CHROMA_COLLECTION: 'story_sage'
+ENTITIES_PATH: './entities.json'
+SERIES_PATH: './series.yml'

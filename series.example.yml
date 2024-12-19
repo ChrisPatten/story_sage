@@ -1,0 +1,20 @@
+- series_id: 1
+  series_name: 'Sherlock Holmes'
+  series_metadata_name: 'sherlock_holmes'
+  books:
+    - number_in_series: 1
+      title: 'A Study in Scarlet'
+      book_metadata_name: '01_a_study_in_scarlet'
+      number_of_chapters: 14
+    - number_in_series: 2
+      title: 'The Sign of the Four'
+      book_metadata_name: '02_the_sign_of_four'
+      number_of_chapters: 12
+    - number_in_series: 3
+      title: 'The Hound of the Baskervilles'
+      book_metadata_name: '03_the_hound_of_the_baskervilles'
+      number_of_chapters: 15
+    - number_in_series: 4
+      title: 'The Valley of Fear'
+      book_metadata_name: '04_the_valley_of_fear'
+      number_of_chapters: 14

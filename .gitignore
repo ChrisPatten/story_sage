@@ -5,9 +5,12 @@ __pycache__/
 *.epub
 .ds_store
 config.yml
+series.yml
 *.faiss
-chunks/
+chunks/*.pkl
 chroma_data/
 booknlp/output/
 !requirements.txt
+logs/*.log*
+*.json
 series.yml
