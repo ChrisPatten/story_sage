@@ -28,6 +28,8 @@ from openai import OpenAI
 import httpx
 import time
 from pydantic import BaseModel
+from tqdm import tqdm
+import json
 
 class StorySageEntityExtractor():
     """
@@ -132,7 +134,7 @@ class StorySageEntityExtractor():
 
     def extract(self, book_chunks: dict, 
                 token_per_min_limit: int = 200000, 
-                cooldown_secs: int = 30) -> list:
+                cooldown_secs: int = 30) -> list[dict]:
         """
         Extract named entities from chunks of text in a book.
 
@@ -170,7 +172,7 @@ class StorySageEntityExtractor():
         
         # Calculate the number of chapters and initialize a list to store results
         num_chapters = len(book_chunks)
-        result = []
+        entities_list = []
 
         # Set a limit on the number of tokens processed per minute based on cooldown period
         len_cap = (token_per_min_limit * 4) / (60 / cooldown_secs)  # ~ 4 characters per token, adjust for cooldown
@@ -179,7 +181,7 @@ class StorySageEntityExtractor():
         counter = 0
 
         # Iterate over each chapter in the book_chunks
-        for i, chapter_chunks in book_chunks.items():
+        for i, chapter_chunks in tqdm(book_chunks.items(), desc='Extracting Entities'):
             # Combine all text chunks in the chapter into a single string
             chapter_text = '\n'.join(chapter_chunks)
 
@@ -194,13 +196,35 @@ class StorySageEntityExtractor():
             
             # Extract named entities from the current chapter's text
             entities, usage = self._extract_named_entities(chapter_text)
-            result.append(entities)
+            entities_list.append(entities)
 
             # Update the counter with the length of the processed chapter
             counter += chapter_len
 
-        # Process the extracted entities to clean and standardize them
-        for chapter_entities in result:
+        entities_dict_list = [entity.model_dump() for entity in entities_list]
+
+        with open('intermediate_entities.json', 'w', encoding='utf-8') as f:
+            json.dump(entities_dict_list, f, ensure_ascii=False, indent=4)
+
+        print(f'Finished extracting entities from {num_chapters} chapters')
+        
+        return entities_dict_list
+
+    def process_entities(self, entities_dict_list: list[dict]) -> list[dict]:
+        """
+        Process the extracted entities to clean and standardize them.
+
+        Args:
+            entities_dict_list (list): List of dictionaries containing extracted entities.
+
+        Returns:
+            list: Processed list of entities.
+        """
+        total_entities = 0
+        processed_entities_list = []
+
+        for chapter_entities in tqdm(entities_dict_list, desc='Cleaning and standardizing entities'):
+            processed_chapter_entities = {}
             for entity_type, entities in chapter_entities.items():
                 processed_entities = []
                 for entity in entities:
@@ -211,12 +235,13 @@ class StorySageEntityExtractor():
                     # Add to the list if the length is >= 3
                     if len(processed_entity) >= 3:
                         processed_entities.append(processed_entity)
+                        total_entities += 1
                 # Update the entities with the processed list
-                chapter_entities[entity_type] = processed_entities
+                processed_chapter_entities[entity_type] = processed_entities
+            processed_entities_list.append(processed_chapter_entities)
 
-        print(f'Finished extracting from {num_chapters} chapters')
-        
-        return result
+        print(f'Finished processing {total_entities} entities')
+        return processed_entities_list
 
 
     class StorySageEntities(BaseModel):
@@ -235,3 +260,6 @@ class StorySageEntityExtractor():
         groups: list[str]
         animals: list[str]
         objects: list[str]
+
+        def items(self):
+            return self.model_dump().items()

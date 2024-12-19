@@ -2,7 +2,6 @@ from typing import List, Set, Dict
 from pydantic import BaseModel
 from openai import OpenAI
 import httpx
-import time
 import os
 import glob
 import json
@@ -281,11 +280,13 @@ class StorySageEntityProcessor:
 # Example usage:
 if __name__ == "__main__":
     # Initialize the processor with your OpenAI API key.
-    processor = StorySageEntityProcessor(api_key='API_KEY')
+    api_key = os.getenv('OPENAI_API_KEY', 'API_KEY')
+
+    processor = StorySageEntityProcessor(api_key=api_key)
 
     # Define the series metadata name and ID.
-    series_metadata_name = 'wheel_of_time'
-    series_id = 3
+    series_metadata_name = 'the_expanse'
+    series_id = 4
 
     # Update entities based on JSON files in the specified directory.
     processor.update_entities_from_directory(entities_json_path='./entities.json', 

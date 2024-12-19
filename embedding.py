@@ -51,23 +51,14 @@ import glob
 import os
 import yaml
 import json
-
-# Load series.yml to create a mapping from series_metadata_name to series_id
-with open('series.yml', 'r') as f:
-    series_list = yaml.safe_load(f)
-
-with open('entities.json', 'r') as f:
-    entities = json.load(f)
-
-with open('config.yml', 'r') as f:
-    config = yaml.safe_load(f)
+import argparse
 
 def load_chunk_from_disk(file_path: str) -> List[Document]:
     """
-    Load text chunks from a pickle file and create a list of Document objects.
+    Load text chunks from a pickle or JSON file and create a list of Document objects.
 
     Args:
-        file_path (str): Path to the pickle file containing text chunks.
+        file_path (str): Path to the pickle or JSON file containing text chunks.
 
     Returns:
         List[Document]: A list of Document objects with page content and metadata.
@@ -78,28 +69,41 @@ def load_chunk_from_disk(file_path: str) -> List[Document]:
         10  # Assuming the pickle file contains 10 chunks
     """
     doc_collection = []
-    with open(file_path, 'rb') as f:
-        chunks = pickle.load(f)
-        # Extract book and chapter numbers from the filename
-        filename = os.path.basename(file_path)
-        match = re.match(r'(\d+)_(\d+)', filename)
-        if match:
-            book_number, chapter_number = map(int, match.groups())
-        else:
-            print(f'Warning: Filename "{filename}" does not match the expected pattern.')
-            return doc_collection
+    # Extract book and chapter numbers from the filename
+    filename = os.path.basename(file_path)
+    match = re.match(r'(\d+)_(\d+)', filename)
+    if match:
+        book_number, chapter_number = map(int, match.groups())
+    else:
+        print(f'Warning: Filename "{filename}" does not match the expected pattern.')
+        return doc_collection
 
-        for chunk in chunks:
-            # Create a Document object for each chunk
-            doc = Document(
-                page_content=chunk,
-                metadata={
-                    'book_number': book_number,
-                    'chapter_number': chapter_number
-                }
-            )
-            doc_collection.append(doc)
-        del chunks  # Free memory
+    # Determine file extension
+    _, file_ext = os.path.splitext(file_path)
+    file_ext = file_ext.lower()
+
+    # Load chunks from the file
+    if file_ext == '.pkl':
+        with open(file_path, 'rb') as f:
+            chunks = pickle.load(f)
+    elif file_ext == '.json':
+        with open(file_path, 'r') as f:
+            chunks = json.load(f)
+    else:
+        print(f'Warning: Unsupported file extension "{file_ext}" for file "{filename}".')
+        return doc_collection
+
+    for chunk in chunks:
+        # Create a Document object for each chunk
+        doc = Document(
+            page_content=chunk,
+            metadata={
+                'book_number': book_number,
+                'chapter_number': chapter_number
+            }
+        )
+        doc_collection.append(doc)
+    del chunks  # Free memory
     return doc_collection
 
 class Embedder(EmbeddingFunction):
@@ -251,20 +255,42 @@ if __name__ == '__main__':
         - The 'chunks' directory should contain the appropriate pickle files with text chunks.
         - The ChromaDB vector store will be created at the specified path ('./chroma_data').
     """
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Embedding Utility Script')
+    parser.add_argument('--series_list_path', type=str, default='series.yml',
+                        help='Path to the series.yml file (default: series.yml)')
+    parser.add_argument('--entities_path', type=str, default='entities.json',
+                        help='Path to the entities.json file (default: entities.json)')
+    parser.add_argument('--config_path', type=str, default='config.yml',
+                        help='Path to the config.yml file (default: config.yml)')
+    args = parser.parse_args()
+
+    # Load the series list from the provided path
+    with open(args.series_list_path, 'r') as f:
+        series_list = yaml.safe_load(f)
+
+    # Load the entities from the provided path
+    with open(args.entities_path, 'r') as f:
+        entities = json.load(f)
+
+    # Load the configuration from the provided path
+    with open(args.config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
     # Initialize the ChromaDB client with a persistent storage path
-    chroma_client = chromadb.PersistentClient(path='./chroma_data')
+    chroma_client = chromadb.PersistentClient(path=config['CHROMA_PATH'])
     embedder = Embedder()
 
-    chroma_client.delete_collection(config['CHROMA_COLLECTION'])  # Delete the collection if it already exists
+    #chroma_client.delete_collection(config['CHROMA_COLLECTION'])  # Delete the collection if it already exists
 
     # Get or create a collection in the vector store
     vector_store = chroma_client.get_or_create_collection(
         name=config['CHROMA_COLLECTION'],
         embedding_function=embedder
     )
-    print('Created vector store')
+    print('Got vector store')
 
-    series_to_process = [ 2, 3 ]  # Series IDs to process
+    series_to_process = [ 4 ]  # Series IDs to process
 
     # Iterate over subdirectories in ./chunks
     for series_id in series_to_process:
@@ -274,8 +300,12 @@ if __name__ == '__main__':
         print(f'Processing series: {series_name} | {series_metadata_name} | {series_id}')
         series_dir = f'./chunks/{series_metadata_name}/semantic_chunks/'
         if os.path.isdir(series_dir):
+            # Collect all .pkl and .json files in the series directory
+            chunk_files = glob.glob(f'{series_dir}/*.pkl') + glob.glob(f'{series_dir}/*.json')
+            if not chunk_files:
+                raise ValueError(f'No chunk files found in directory {series_dir}')
             # Process chunks in the series directory
-            for file in tqdm(glob.glob(f'{series_dir}/*.pkl'), desc=f'Processing chunks for {series_name}'):
+            for file in tqdm(chunk_files, desc=f'Processing chunks for {series_name}'):
                 # Load documents from disk
                 doc_collection = load_chunk_from_disk(file)
                 # Embed documents and add them to the vector store
