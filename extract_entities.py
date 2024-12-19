@@ -11,8 +11,8 @@ with open('config.yml', 'r') as file:
 
 api_key = config['OPENAI_API_KEY']
 
-TARGET_SERIES_ID = 2 # harry potter
-TARGET_BOOK_NUMBER = 7
+TARGET_SERIES_ID = 4 # The series_id of the target series
+TARGET_BOOK_NUMBER = 1 # The number of the target book in the series
 
 # Load series.yml to create a mapping from series_metadata_name to series_id
 with open('series.yml', 'r') as file:
@@ -28,14 +28,18 @@ print(f'Extracting entities for {series_metadata_name} - {book_metadata_name}')
 
 path_to_chunks = f'./chunks/{series_metadata_name}/semantic_chunks'
 chunks = {}
-for filepath in glob.glob(f'{path_to_chunks}/*.pkl'):
-    match = re.match(r'(\d+)_(\d+)\.pkl', os.path.basename(filepath))
+for filepath in glob.glob(f'{path_to_chunks}/*.pkl') + glob.glob(f'{path_to_chunks}/*.json'):
+    match = re.match(r'(\d+)_(\d+)\.(pkl|json)', os.path.basename(filepath))
     if match:
-        book_number, chapter_number = map(int, match.groups())
-        with open(filepath, 'rb') as f:
+        book_number, chapter_number, file_ext = match.groups()
+        book_number, chapter_number = map(int, [book_number, chapter_number])
+        with open(filepath, 'rb' if file_ext == 'pkl' else 'r') as f:
             if book_number not in chunks:
                 chunks[book_number] = {}
-            chunks[book_number][chapter_number] = pickle.load(f)
+            if file_ext == 'pkl':
+                chunks[book_number][chapter_number] = pickle.load(f)
+            else:
+                chunks[book_number][chapter_number] = json.load(f)
 
 target_file_path = f'./entities/{series_metadata_name}'
 if not os.path.exists(target_file_path):
