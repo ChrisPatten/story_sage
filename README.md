@@ -151,39 +151,38 @@ Strip out any non-essential content from the text files, such as table of conten
 
 ### Chunking
 
-#### Running the Chunking Script
+#### Using the StorySageChunker Class
 
-To generate semantic chunks from your book data, use the `chunking.py` script located in `./chunks/chunking.py`. Follow these steps:
+The chunking functionality has been encapsulated in the `StorySageChunker` class within the `story_sage` module. This class helps in splitting your book text into semantically coherent chunks.
 
-1. **Ensure Dependencies are Installed**
-   Make sure all required Python packages are installed. If not, install them using:
-   ```bash
-   pip install -r requirements.txt
+1. **Import the Class**
+   ```python
+   from story_sage.utils.chunker import StorySageChunker
    ```
 
-2. **Configure the Script**
-   Open `chunking.py` and verify the configurations such as `SERIES_NAME` and file paths.
-
-3. **Run the Script**
-   Execute the script using:
-   ```bash
-   python chunking.py
+2. **Initialize the Chunker**
+   ```python
+   chunker = StorySageChunker(model_name='all-MiniLM-L6-v2')
    ```
 
-   This will process the text files in `./books/{SERIES_NAME}/` and output chunked JSON files to `./chunks/{SERIES_NAME}/semantic_chunks/`.
+3. **Process Text**
+   ```python
+   chunks = chunker.process_file(
+       text=full_text,
+       context_window=2,
+       percentile_threshold=85,
+       min_chunk_size=3
+   )
+   ```
 
-4. **Verify the Output**
-   After running, check the `semantic_chunks` directory for the generated JSON files containing the text chunks.
+4. **Configure Parameters**
+   - `model_name`: Specify the sentence transformer model to use.
+   - `context_window`: Number of sentences to include for context.
+   - `percentile_threshold`: Threshold for identifying where to break chunks.
+   - `min_chunk_size`: Minimum number of sentences per chunk.
 
-#### Parameters
-
-The `chunking.py` script has several configurable parameters:
-
-- `context_window`: Number of sentences to include for context.
-- `percentile_threshold`: Threshold for identifying where to break chunks.
-- `min_chunk_size`: Minimum number of sentences per chunk.
-
-You can modify these parameters in the `process_file` method call within the script to tailor the chunking process to your needs.
+5. **Verify the Output**
+   After processing, you'll receive a list of text chunks that can be used for further processing like entity extraction or embedding.
 
 ### Entity Extraction
 
