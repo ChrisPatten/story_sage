@@ -69,6 +69,9 @@ class StorySageRetriever:
         # Combine filters for book and chapter
         combined_filter = {'$and': [combined_filter, book_chapter_filter]}
 
+        # Create a fallback filter if we need to requery without tags
+        fallback_filter = combined_filter.copy()
+
         # Build filters based on entities like people, places, groups, and animals
         entity_filters = []
         if len(context_filters.get('entities', [])) > 0:
@@ -97,6 +100,18 @@ class StorySageRetriever:
             include=['metadatas', 'documents'],  # Include metadata and documents in the results
             where=combined_filter  # Apply the combined filter
         )
+
+        # If no results are found, retry the query without entity filters
+        if len(query_result) == 0 and len(entity_filters) > 0:
+            # Log that we are retrying the query without entity filters
+            self.logger.debug("Retrying query without entity filters")
+            # Query the vector store again without entity filters
+            query_result = self.vector_store.query(
+                query_texts=[query_str],  # The user's query
+                n_results=self.n_chunks,  # Number of results to return
+                include=['metadatas', 'documents'],  # Include metadata and documents in the results
+                where=fallback_filter  # Apply the fallback filter
+            )
 
         # Log the retrieved documents for debugging purposes
         self.logger.debug(f"Retrieved documents: {query_result}")
