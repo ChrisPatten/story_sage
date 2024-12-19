@@ -121,32 +121,32 @@
     - number_in_series: 2
       title: 'Caliban’s War'
       book_metadata_name: '02_calibans_war'
-      number_of_chapters: 55
+      number_of_chapters: 54
     - number_in_series: 3
       title: 'Abaddon’s Gate'
       book_metadata_name: '03_abaddons_gate'
-      number_of_chapters: 55
+      number_of_chapters: 53
     - number_in_series: 4
       title: 'Cibola Burn'
       book_metadata_name: '04_cibola_burn'
-      number_of_chapters: 55
+      number_of_chapters: 56
     - number_in_series: 5
       title: 'Nemesis Games'
       book_metadata_name: '05_nemesis_games'
-      number_of_chapters: 55
+      number_of_chapters: 51
     - number_in_series: 6
       title: 'Babylon’s Ashes'
       book_metadata_name: '06_babylons_ashes'
-      number_of_chapters: 55
+      number_of_chapters: 53
     - number_in_series: 7
       title: 'Persepolis Rising'
       book_metadata_name: '07_persepolis_rising'
-      number_of_chapters: 55
+      number_of_chapters: 52
     - number_in_series: 8
       title: 'Tiamat’s Wrath'
       book_metadata_name: '08_tiamats_wrath'
-      number_of_chapters: 55
+      number_of_chapters: 50
     - number_in_series: 9
       title: 'Leviathan Falls'
       book_metadata_name: '09_leviathan_falls'
-      number_of_chapters: 55
+      number_of_chapters: 49
