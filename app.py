@@ -45,6 +45,10 @@ import logging
 from logging.handlers import TimedRotatingFileHandler
 import warnings
 
+CONFIG_PATH = './config.yml'
+
+
+
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 app = Flask(__name__)
@@ -63,11 +67,11 @@ logger.addHandler(log_handler)
 
 try:
     # Load configuration and data files
-    with open('config.yml', 'r') as file:
+    with open(CONFIG_PATH, 'r') as file:
         config = yaml.safe_load(file)
-    with open('series.yml', 'r') as file:
+    with open(config['SERIES_PATH'], 'r') as file:
         series_list = yaml.safe_load(file)
-    with open('entities.json', 'r') as file:
+    with open(config['ENTITIES_PATH'], 'r') as file:
         entities = yaml.safe_load(file)
 except Exception as e:
     # Log any errors that occur during the loading of configuration files
