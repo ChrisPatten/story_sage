@@ -1,3 +1,29 @@
+"""
+entity_extractor.py
+
+This module provides the `StorySageEntityExtractor` class, which is used to extract named entities from text using the GPT-4 language model.
+
+The extracted entities include people, places, groups, animals, and objects.
+
+Example Usage:
+    ```python
+    extractor = StorySageEntityExtractor(api_key="your_api_key")
+    text = "John Doe went to New York with his dog."
+    entities, usage = extractor._extract_named_entities(text)
+    print(entities)
+    # Output:
+    # {
+    #     "people": ["John Doe"],
+    #     "places": ["New York"],
+    #     "groups": [],
+    #     "animals": ["dog"],
+    #     "objects": []
+    # }
+    print(usage)
+    # Output: Usage information dictionary
+    ```
+"""
+
 from openai import OpenAI
 import httpx
 import time
@@ -30,7 +56,15 @@ class StorySageEntityExtractor():
     """
 
     def __init__(self, api_key: str):
+        """
+        Initialize the StorySageEntityExtractor with the provided OpenAI API key.
+
+        Args:
+            api_key (str): Your OpenAI API key.
+        """
+        # Create an HTTP client with SSL verification disabled
         req_client = httpx.Client(verify=False)
+        # Initialize the OpenAI client with the API key and HTTP client
         self.client = OpenAI(api_key=api_key, http_client=req_client)
 
     def _extract_named_entities(self, text: str) -> tuple[dict, dict]:
@@ -71,20 +105,18 @@ class StorySageEntityExtractor():
             messages=[
                 {"role": "system", "content": """
                     You are a highly advanced natural language processing agent that 
-                    is optimized to do named entity recognition (NER). Your goal is to
-                    extract entities and a summary from text provided to you.
-                    
+                    is optimized to perform named entity recognition (NER). Your goal is to
+                    extract entities from text provided to you.
+
                     For example, if the text is:
-                        Standing with the other Whitecloaks, Perrin saw the Lugard Road near the Manetherendrelle and the border of Murandy.
-                        If dogs had been able to make footprints on stone, he would have said the tracks were the prints of a pack of large hounds.
-                        He hefted his axe and kicked aside the basket on the road.
-                
+                        Alice saw the White Rabbit while sitting by the river.
+
                     Extract:
-                        People: Perrin
-                        Places: Lugard Road, Manetherendrelle, Murandy
-                        Groups: Whitecloaks, pack
-                        Animals: dogs
-                        Objects: axe, basket
+                        People: Alice, White Rabbit
+                        Places: river
+                        Groups: []
+                        Animals: rabbit
+                        Objects: []
                     """},
                 {"role": "user", "content": text},
             ],
@@ -95,8 +127,9 @@ class StorySageEntityExtractor():
         extracted_entity = completion.choices[0].message.parsed
         usage_information = completion.usage
 
+        # Return the extracted entities and usage information
         return extracted_entity, usage_information
-    
+
     def extract(self, book_chunks: dict, 
                 token_per_min_limit: int = 200000, 
                 cooldown_secs: int = 30) -> list:
@@ -160,10 +193,26 @@ class StorySageEntityExtractor():
                 counter = 0  # Reset the counter after cooldown
             
             # Extract named entities from the current chapter's text
-            result.append(self._extract_named_entities(chapter_text))
+            entities, usage = self._extract_named_entities(chapter_text)
+            result.append(entities)
 
             # Update the counter with the length of the processed chapter
             counter += chapter_len
+
+        # Process the extracted entities to clean and standardize them
+        for chapter_entities in result:
+            for entity_type, entities in chapter_entities.items():
+                processed_entities = []
+                for entity in entities:
+                    # Convert to lowercase and remove non-alphabetic characters
+                    processed_entity = ''.join(
+                        char for char in entity.lower() if char.isalpha() or char.isspace()
+                    ).strip()
+                    # Add to the list if the length is >= 3
+                    if len(processed_entity) >= 3:
+                        processed_entities.append(processed_entity)
+                # Update the entities with the processed list
+                chapter_entities[entity_type] = processed_entities
 
         print(f'Finished extracting from {num_chapters} chapters')
         
@@ -171,6 +220,16 @@ class StorySageEntityExtractor():
 
 
     class StorySageEntities(BaseModel):
+        """
+        Pydantic model representing the structure of extracted entities.
+
+        Attributes:
+            people (List[str]): List of people entities.
+            places (List[str]): List of place entities.
+            groups (List[str]): List of group entities.
+            animals (List[str]): List of animal entities.
+            objects (List[str]): List of object entities.
+        """
         people: list[str]
         places: list[str]
         groups: list[str]
