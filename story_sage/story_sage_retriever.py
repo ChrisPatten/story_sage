@@ -49,7 +49,7 @@ class StorySageRetriever:
         # Log the incoming query and filters for debugging
         self.logger.debug(f"Retrieving chunks with query: {query_str}, context_filters: {context_filters}")
 
-        combined_filter = {'series_id': context_filters.get('series_id')}  # Initialize the combined filter dictionary
+        combined_filter = {'series_id': int(context_filters.get('series_id'))}  # Initialize the combined filter dictionary
 
         # Extract book and chapter numbers, if present
         book_number = context_filters.get('book_number')
