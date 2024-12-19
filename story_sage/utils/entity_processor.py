@@ -1,8 +1,13 @@
-from typing import List
+from typing import List, Set, Dict
 from pydantic import BaseModel
 from openai import OpenAI
 import httpx
 import time
+import os
+import glob
+import json
+import re
+from tqdm import tqdm
 
 class StorySageEntityProcessor:
     """
@@ -22,7 +27,7 @@ class StorySageEntityProcessor:
         A Pydantic model representing grouped entities.
 
         Attributes:
-            entities (list[list[str]]): A list of lists, where each sublist contains
+            entities (List[List[str]]): A list of lists, where each sublist contains
                 names that have been grouped together as representing the same entity.
         """
         entities: list[list[str]]
@@ -34,69 +39,65 @@ class StorySageEntityProcessor:
         Args:
             api_key (str): The API key for accessing the OpenAI services.
         """
+        # Initialize the HTTP client with SSL verification disabled.
         req_client = httpx.Client(verify=False)
         self.api_key = api_key
+        # Initialize the OpenAI client for making API requests.
         self.client = OpenAI(api_key=api_key, http_client=req_client)
 
-    def zip_entities(self, series_entities, new_entities):
+    def get_cleaned_entities_list(self, entities: list) -> list:
+        """
+        Remove entities that are too short or contain special characters.
+
+        Args:
+            entities (list): A list of entities to be cleaned.
+
+        Returns:
+            list: A list of cleaned entities.
+        """
+        result = []
+        for entity in entities:
+            # Remove non-alphabetic characters and convert to lowercase.
+            entity = ''.join(c for c in entity.lower() if c.isalpha() or c.isspace())
+            if len(entity) >= 3:
+                result.append(entity)
+        return result
+
+    def zip_entities(self, series_entities: dict[str, Set[str]], new_entities: dict[str, Set[str]]) -> dict[str, Set[str]]:
         """
         Combine new chapter entities into the overall series entities.
 
         Args:
             series_entities (dict): The existing series entities.
-            new_entities (list): A list of new entities to be added to the series.
+            new_entities (dict): A dictionary of new entities to be added to the series.
 
         Returns:
             dict: Updated series entities with new entities incorporated.
         """
-        # Iterate over each chapter's entities
-        for chapter_entities in new_entities:
-            for entity_type, entities in chapter_entities[0].items():
-                if entity_type not in series_entities:
-                    series_entities[entity_type] = []
-                # Extend the list of entities for each type
-                series_entities[entity_type].extend(entities)
+        # Iterate over each entity type in the new entities.
+        for entity_type, entities in new_entities.items():
+            if entity_type not in ['people', 'entities']:
+                continue  # Skip types we're not interested in.
+            if entity_type not in series_entities:
+                series_entities[entity_type] = set()
+            # Update the set of entities for each type.
+            series_entities[entity_type].update(entities)
         return series_entities
 
-    def collect_unique_values(self, series_entities: dict) -> tuple[list, list]:
+    def get_unique_entities(self, entities: list) -> list:
         """
-        Extract unique people and entities from the series entities.
+        Extract unique entities from the entity lists.
 
         Args:
-            series_entities (dict): The series entities containing various types.
+            entities (list): A list of entity lists.
 
         Returns:
-            tuple:
-                list: A list of unique people names.
-                list: A list of unique other entity names.
+            list: A list of unique entities.
         """
-        series_people_set = set()
-        series_entities_set = set()
-        
-        # Collect people
-        series_people_set.update(series_entities.get('people', []))
-            
-        # Collect other entities
-        for key, values in series_entities.items():
-            if key != 'people':
-                series_entities_set.update(values)
-
-        series_people_list = []
-        series_entities_list = []
-        
-        # Normalize people names
-        for person in series_people_set:
-            person = person.lower()
-            person = ''.join(c for c in person if c.isalpha() or c.isspace())
-            series_people_list.append(person)
-
-        # Normalize entity names
-        for entity in series_entities_set:
-            entity = entity.lower()
-            entity = ''.join(c for c in entity if c.isalpha() or c.isspace())
-            series_entities_list.append(entity)
-        
-        return series_people_list, series_entities_list
+        entities_set = set()
+        for entity in entities:
+            entities_set.update(entity)  # Add entities to the set to ensure uniqueness.
+        return list(entities_set)
 
     def group_similar_names(self, names_to_group: list[str]) -> GroupedEntities:
         """
@@ -108,8 +109,11 @@ class StorySageEntityProcessor:
         Returns:
             GroupedEntities: An object containing grouped names.
         """
+        if not names_to_group:
+            raise ValueError("The list of names to group cannot be empty.")
+        # Join the names into a single string for processing.
         text = ', '.join(names_to_group)
-        # Make an API call to group similar names
+        # Make an API call to group similar names using the OpenAI model.
         completion = self.client.beta.chat.completions.parse(
             model="gpt-4o",
             messages=[
@@ -119,7 +123,8 @@ class StorySageEntityProcessor:
                     group together names that represent the same thing from the text
                     provided to you.
                  
-                    Make sure all names in the input are present in the output.   
+                    Make sure all names in the input are present in the output.
+                    Do not add any names that are not in the input.
                  
                     For example:
                         Input: Bran, Mat, Bran al'Vere, Haral Luhhan, Breyan, Matrim Cauthon, Alsbet Luhhan, Master al'Vere, Mat Cauthon
@@ -133,6 +138,7 @@ class StorySageEntityProcessor:
             ],
             response_format=self.GroupedEntities
         )
+        # Return the parsed grouped entities.
         return completion.choices[0].message.parsed
 
     def remove_duplicate_elements(self, grouped_entities: GroupedEntities) -> List[List[str]]:
@@ -145,25 +151,23 @@ class StorySageEntityProcessor:
         Returns:
             List[List[str]]: A list of groups with duplicates removed.
         """
-        # Create a set to track seen names
-        seen_names = set()
+        seen_names = set()  # Set to keep track of names we've already seen.
         filtered_groups = []
 
-        # Iterate through each group
+        # Iterate through each group and remove duplicates.
         for group in grouped_entities.entities:
             filtered_group = []
             for name in group:
                 if name not in seen_names:
                     filtered_group.append(name)
-                    seen_names.add(name)
-            # Only keep non-empty groups
+                    seen_names.add(name)  # Mark the name as seen.
             if filtered_group:
                 filtered_groups.append(filtered_group)
         return filtered_groups
 
-    def create_result_dict(self, people, entities, base_id):
+    def create_result_dict(self, people: List[List[str]], entities: GroupedEntities, base_id: str) -> Dict[str, Dict[str, List[str]]]:
         """
-        Generate a result dictionary mapping IDs to names.
+        Create a dictionary containing mappings by ID and name for people and entities.
 
         Args:
             people (List[List[str]]): Grouped lists of people names.
@@ -180,15 +184,20 @@ class StorySageEntityProcessor:
             'entity_by_name': {}
         }
         
-        # Assign unique IDs to people groups
-        for i, person_list in enumerate(people):
+        # Assign unique IDs to each group of people.
+        for i, person_list in enumerate(people.entities):
             person_id = f"{base_id}_p_{i}"
             result['people_by_id'][person_id] = person_list
-            for name in person_list:
-                result['people_by_name'][name] = person_id
+            try:
+                for name in person_list:
+                    result['people_by_name'][name] = person_id
+            except TypeError as e:
+                print(f"Error processing person list: {person_list}")
+                raise e
         
-        # Assign unique IDs to entity groups
-        for j, entity_list in enumerate(entities):
+        # Assign unique IDs to each group of entities.
+        for j, entity_list in enumerate(entities.entities):
+            # Filter out entities that are already classified under people.
             filtered_entities = [entity for entity in entity_list if entity not in result['people_by_name']]
             if filtered_entities:
                 entity_id = f"{base_id}_e_{j}"
@@ -197,41 +206,107 @@ class StorySageEntityProcessor:
                     result['entity_by_name'][entity] = entity_id
         return result
 
+    def update_entities_from_directory(self, entities_json_path: str, entities_dir: str, series_metadata_name: str, series_id: int):
+        """
+        Update entities.json based on the JSON files in the entities directory.
+
+        Args:
+            entities_json_path (str): Path to the entities.json file.
+            entities_dir (str): Directory containing entity JSON files.
+            series_metadata_name (str): Metadata name for the series.
+            series_id (int): ID of the series.
+        """
+        # Load existing entities from entities.json
+        if os.path.exists(entities_json_path):
+            print('Loading existing entities.json')
+            with open(entities_json_path, 'r') as f:
+                existing_entities = json.load(f)
+        else:
+            print('No existing entities.json')
+            existing_entities = {'series': {}}
+
+        # Process each entity file in the directory
+        for entity_file in tqdm(glob.glob(os.path.join(entities_dir, '*.json')), desc='Processing entity files'):
+            with open(entity_file, 'r') as f:
+                new_entities = json.load(f)
+                all_people = set()
+                all_entities = set()
+                for chapter in new_entities:
+                    all_people.update(chapter.get('people', []))
+                    for entity_type, entities in chapter.items():
+                        if entity_type != 'people':
+                            all_entities.update(entities)
+
+                all_people = self.get_cleaned_entities_list(list(all_people))
+                all_entities = self.get_cleaned_entities_list(list(all_entities))
+
+                grouped_people = self.group_similar_names(list(all_people))
+                grouped_entities = self.group_similar_names(list(all_entities))
+                entities_with_ids = self.create_result_dict(grouped_people, grouped_entities, str(series_id))
+                # Merge new entities into existing entities
+                if str(series_id) not in existing_entities['series']:
+                    existing_entities['series'][str(series_id)] = {
+                        'series_metadata_name': series_metadata_name,
+                        'series_id': series_id,
+                        'series_entities': entities_with_ids
+                    }
+                else:
+                    existing_entities['series'][str(series_id)]['series_entities'] = self.zip_entities(
+                        existing_entities['series'][str(series_id)]['series_entities'],
+                        entities_with_ids
+                    )
+
+        # Save updated entities back to entities.json
+        with open(entities_json_path, 'w') as f:
+            json.dump(existing_entities, f, indent=4)
+
+    def clean_entity_list(self, entities: list) -> list:
+        """
+        Clean entities by converting to lowercase and removing invalid characters.
+
+        Args:
+            entities (list): The list of entities.
+
+        Returns:
+            list: The cleaned list of entities.
+        """
+        result = []
+        for entity in entities:
+            # Remove any characters not in [a-z] or space, convert to lowercase, and strip whitespace.
+            cleaned_entity = re.sub(r'[^a-z\s]', '', entity.lower()).strip()
+            if len(cleaned_entity) >= 3:
+                result.append(cleaned_entity)
+        return result
+
 # Example usage:
 if __name__ == "__main__":
-    # Initialize the processor with your OpenAI API key
-    processor = StorySageEntityProcessor(api_key='your_api_key')
+    # Initialize the processor with your OpenAI API key.
+    processor = StorySageEntityProcessor(api_key='API_KEY')
 
-    # Sample data
-    series_entities = {}
-    new_entities = [
-        [{'people': ['Alice', 'Bob'], 'places': ['Wonderland']}],
-        [{'people': ['Alice Liddell'], 'places': ['Looking Glass']}]
-    ]
+    # Define the series metadata name and ID.
+    series_metadata_name = 'wheel_of_time'
+    series_id = 3
 
-    # Combine entities from new chapters into the series
-    combined_entities = processor.zip_entities(series_entities, new_entities)
-    
-    # Extract unique people and entities
-    people_list, entities_list = processor.collect_unique_values(combined_entities)
-    
-    # Group similar names
-    grouped_people = processor.group_similar_names(people_list)
-    grouped_entities = processor.group_similar_names(entities_list)
-    
-    # Remove duplicates across groups
-    unique_people = processor.remove_duplicate_elements(grouped_people)
-    unique_entities = processor.remove_duplicate_elements(grouped_entities)
-    
-    # Create the final result dictionary
-    result_dict = processor.create_result_dict(unique_people, unique_entities, base_id='series1')
-    
-    # Example result output
-    print("People by ID:")
-    print(result_dict['people_by_id'])
-    print("\nPeople by Name:")
-    print(result_dict['people_by_name'])
-    print("\nEntities by ID:")
-    print(result_dict['entity_by_id'])
-    print("\nEntities by Name:")
-    print(result_dict['entity_by_name'])
+    # Update entities based on JSON files in the specified directory.
+    processor.update_entities_from_directory(entities_json_path='./entities.json', 
+                                             entities_dir=f'./entities/{series_metadata_name}/',
+                                             series_metadata_name=series_metadata_name, 
+                                             series_id=series_id)
+
+
+    # Example result output:
+    """
+    {
+        "series": {
+            "1": {
+                "series_metadata_name": "harry_potter",
+                "series_id": 2,
+                "series_name": "Harry Potter",
+                "series_entities": {
+                    "people_list": [...],
+                    "other_entities_list": [...]
+                }
+            }
+        }
+    }
+    """
