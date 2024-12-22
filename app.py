@@ -36,6 +36,7 @@ Note:
 from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS, cross_origin
 from story_sage.story_sage import StorySage
+from story_sage.story_sage_config import StorySageConfig
 import yaml
 import pickle
 import glob
@@ -46,8 +47,6 @@ from logging.handlers import TimedRotatingFileHandler
 import warnings
 
 CONFIG_PATH = './config.yml'
-
-
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -72,33 +71,20 @@ feedback_handler = TimedRotatingFileHandler('logs/feedback.log', when='midnight'
 feedback_handler.setFormatter(log_formatter)
 feedback_logger.addHandler(feedback_handler)
 
+
 try:
-    # Load configuration and data files
-    with open(CONFIG_PATH, 'r') as file:
-        config = yaml.safe_load(file)
-    with open(config['SERIES_PATH'], 'r') as file:
+    config = StorySageConfig(CONFIG_PATH)
+    with open(config.series_path, 'r') as file:
         series_list = yaml.safe_load(file)
-    with open(config['ENTITIES_PATH'], 'r') as file:
+    with open(config.entities_path, 'r') as file:
         entities = yaml.safe_load(file)
 except Exception as e:
     # Log any errors that occur during the loading of configuration files
     logger.error(f"Error loading configuration files: {e}")
     raise
 
-# Extract configuration settings
-api_key = config['OPENAI_API_KEY']
-chroma_path = config['CHROMA_PATH']
-chroma_collection = config['CHROMA_COLLECTION']
-
 # Initialize the StorySage engine with the provided configurations
-story_sage = StorySage(
-    api_key=api_key,
-    chroma_path=chroma_path,
-    chroma_collection_name=chroma_collection,
-    entities=entities,
-    series_yml_path='series.yml',
-    n_chunks=10  # Number of text chunks to process
-)
+story_sage = StorySage(config=config)
 
 @app.route('/')
 def index():

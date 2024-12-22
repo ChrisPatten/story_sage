@@ -190,11 +190,14 @@
             // Hide chapter slider initially
             chapterContainer.style.display = 'none';
 
+            let lastQuestion = '';
+
             // Update form submission to include selected series and book
             document.getElementById('storyForm').addEventListener('submit', async function(event) {
                 event.preventDefault();
                 const questionInput = document.getElementById('question');
                 const question = questionInput.value;
+                lastQuestion = question; // Store the last question
                 let series_id = parseInt(document.getElementById('series_id').value, 10);
                 if (isNaN(series_id)) {
                     alert('Please select a series.');
@@ -277,6 +280,16 @@
                     chatBody.appendChild(errorMessage);
                     chatBody.scrollTop = chatBody.scrollHeight;
                     console.error('Fetch error:', error);
+                }
+            });
+
+            // Add event listener for up arrow key press in the question input box
+            document.getElementById('question').addEventListener('keydown', function(event) {
+                if (event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    if (lastQuestion) {
+                        this.value = lastQuestion;
+                    }
                 }
             });
         });

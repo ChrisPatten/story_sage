@@ -106,20 +106,24 @@ class StorySageEntityExtractor():
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": """
-                    You are a highly advanced natural language processing agent that 
-                    is optimized to perform named entity recognition (NER). Your goal is to
-                    extract entities from text provided to you.
+                    Please perform the following tasks on the given book passage:
 
-                    For example, if the text is:
-                        Alice saw the White Rabbit while sitting by the river.
+                    1. Extract all entities mentioned in the passage, including people, places, groups, animals, and objects. Present them as a list under "entities".
 
-                    Extract:
-                        People: Alice, White Rabbit
-                        Places: river
-                        Groups: []
-                        Animals: rabbit
-                        Objects: []
-                    """},
+                    2. Generate a concise summary of the passage optimized for encoding in a vector database. Provide this under "summary".
+
+                    Example Input:
+                    "Alice followed the White Rabbit into Wonderland. She met the Cheshire Cat and the Queen of Hearts sitting by the maze holding teacups."
+
+                    Example Output:
+                    {
+                    "people": ["Alice", "White Rabbit", "Cheshire Cat", "Queen of Hearts"],
+                    "entities": ["Wonderland", "maze", "teacups"],
+                    "summary": "Alice enters Wonderland and encounters various characters."
+                    }
+
+                    Passage:
+                """},
                 {"role": "user", "content": text},
             ],
             response_format=self.StorySageEntities
@@ -173,6 +177,7 @@ class StorySageEntityExtractor():
         # Calculate the number of chapters and initialize a list to store results
         num_chapters = len(book_chunks)
         entities_list = []
+        summaries_list = [None] * (num_chapters + 1)
 
         # Set a limit on the number of tokens processed per minute based on cooldown period
         len_cap = (token_per_min_limit * 4) / (60 / cooldown_secs)  # ~ 4 characters per token, adjust for cooldown
@@ -190,12 +195,13 @@ class StorySageEntityExtractor():
             
             # Check if processing this chapter would exceed the token limit
             if counter + chapter_len > len_cap:
-                print(f'Waiting for {cooldown_secs} seconds to avoid exceeding the character limit. Current chapter: {i + 1}. Current length: {counter}')
+                print(f'Waiting for {cooldown_secs} seconds to avoid exceeding the character limit. Current chapter: {i}. Current length: {counter}')
                 time.sleep(cooldown_secs)
                 counter = 0  # Reset the counter after cooldown
             
             # Extract named entities from the current chapter's text
             entities, usage = self._extract_named_entities(chapter_text)
+            summaries_list[i] = entities.summary
             entities_list.append(entities)
 
             # Update the counter with the length of the processed chapter
@@ -203,14 +209,16 @@ class StorySageEntityExtractor():
 
         entities_dict_list = [entity.model_dump() for entity in entities_list]
 
+        with open('intermediate_summaries.json', 'w', encoding='utf-8') as f:
+            json.dump(summaries_list, f, ensure_ascii=False, indent=4)
+
         with open('intermediate_entities.json', 'w', encoding='utf-8') as f:
             json.dump(entities_dict_list, f, ensure_ascii=False, indent=4)
 
         print(f'Finished extracting entities from {num_chapters} chapters')
-        
-        return entities_dict_list
+        return entities_dict_list, summaries_list
 
-    def process_entities(self, entities_dict_list: list[dict]) -> list[dict]:
+    def process_entities(self, entities_dict_list: list[dict]) -> tuple[list[dict], list[str]]:
         """
         Process the extracted entities to clean and standardize them.
 
@@ -255,11 +263,14 @@ class StorySageEntityExtractor():
             animals (List[str]): List of animal entities.
             objects (List[str]): List of object entities.
         """
+        # people: list[str]
+        # places: list[str]
+        # groups: list[str]
+        # animals: list[str]
+        # objects: list[str]
         people: list[str]
-        places: list[str]
-        groups: list[str]
-        animals: list[str]
-        objects: list[str]
+        entities: list[str]
+        summary: str
 
         def items(self):
             return self.model_dump().items()

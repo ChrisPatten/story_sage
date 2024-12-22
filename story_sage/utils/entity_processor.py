@@ -114,24 +114,29 @@ class StorySageEntityProcessor:
         text = ', '.join(names_to_group)
         # Make an API call to group similar names using the OpenAI model.
         completion = self.client.beta.chat.completions.parse(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": """
-                    You are a highly advanced natural language processing agent that 
-                    is optimized to do named entity recognition (NER). Your goal is to
-                    group together names that represent the same thing from the text
-                    provided to you.
-                 
-                    Make sure all names in the input are present in the output.
-                    Do not add any names that are not in the input.
-                 
-                    For example:
-                        Input: Bran, Mat, Bran al'Vere, Haral Luhhan, Breyan, Matrim Cauthon, Alsbet Luhhan, Master al'Vere, Mat Cauthon
-                        Output: [['Bran', "Bran al'Vere", "Master al'Vere"], ['Mat', 'Matrim Cauthon', 'Mat Cauthon'], ['Breyan'], ['Haral Luhhan'], ['Alsbet Luhhan']]
-                 
-                    Another example:
-                        Input: sword, axe, horse, spear, mare
-                        Output: [['sword', 'axe', 'spear'], ['horse', 'mare']]
+                    You are a text analysis expert. Given a list of terms, group them into clusters where each cluster contains variations or references to the same entity. For example:
+
+                    Input: "Bran, Mat, Bran al'Vere, Haral Luhhan, Breyan, Matrim Cauthon, Alsbet Luhhan, Master al'Vere, Mat Cauthon"
+
+                    Should be grouped as:
+                    [
+                        ["Bran", "Bran al'Vere", "Master al'Vere"],
+                        ["Mat", "Matrim Cauthon", "Mat Cauthon"],
+                        ["Haral Luhhan"],
+                        ["Breyan"],
+                        ["Alsbet Luhhan"]
+                    ]
+
+                    Rules:
+                    1. Group together terms that refer to the same entity (including nicknames, titles, and variations)
+                    2. Each term should appear in exactly one group
+                    3. Single-term entities should be in their own group
+                    4. Present the results as a list of lists, with related terms grouped together
+
+                    Please group the following terms:
                     """},
                 {"role": "user", "content": text},
             ],
@@ -285,8 +290,8 @@ if __name__ == "__main__":
     processor = StorySageEntityProcessor(api_key=api_key)
 
     # Define the series metadata name and ID.
-    series_metadata_name = 'the_expanse'
-    series_id = 4
+    series_metadata_name = 'wheel_of_time'
+    series_id = 3
 
     # Update entities based on JSON files in the specified directory.
     processor.update_entities_from_directory(entities_json_path='./entities.json', 

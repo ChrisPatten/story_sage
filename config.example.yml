@@ -3,3 +3,4 @@ CHROMA_PATH: './chroma_data'
 CHROMA_COLLECTION: 'story_sage'
 ENTITIES_PATH: './entities.json'
 SERIES_PATH: './series.yml'
+N_CHUNKS: 5

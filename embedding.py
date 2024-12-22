@@ -106,6 +106,49 @@ def load_chunk_from_disk(file_path: str) -> List[Document]:
     del chunks  # Free memory
     return doc_collection
 
+def load_summary_chunks(file_path: str) -> List[Document]:
+    """
+    Load summary chunks from a JSON file and create a list of Document objects.
+
+    Args:
+        file_path (str): Path to the JSON file containing summary chunks.
+
+    Returns:
+        List[Document]: A list of Document objects with page content and metadata.
+
+    Example:
+        >>> summaries = load_summary_chunks('summaries.json')
+        >>> print(len(summaries))
+        10  # Assuming the JSON file contains 10 summaries
+    """
+    doc_collection = []
+    # Extract book and chapter numbers from the filename
+    filename = os.path.basename(file_path)
+    match = re.match(r'(\d+)', filename)
+    if match:
+        book_number = map(int, match.groups())
+    else:
+        print(f'Warning: Filename "{filename}" does not match the expected pattern.')
+        return doc_collection
+
+    # Load summaries from the JSON file
+    with open(file_path, 'r') as f:
+        summaries = json.load(f)
+
+    for i, summary in enumerate(summaries):
+        # Create a Document object for each summary
+        doc = Document(
+            page_content=summary,
+            metadata={
+                'book_number': book_number,
+                'chapter_number': i + 1  # Assuming each summary corresponds to a chapter
+            }
+        )
+        doc_collection.append(doc)
+    del summaries  # Free memory
+    return doc_collection
+
+
 class Embedder(EmbeddingFunction):
     """
     Embedder class using SentenceTransformer to generate embeddings.
@@ -282,6 +325,7 @@ if __name__ == '__main__':
     embedder = Embedder()
 
     #chroma_client.delete_collection(config['CHROMA_COLLECTION'])  # Delete the collection if it already exists
+    #story_sage_summaries')
 
     # Get or create a collection in the vector store
     vector_store = chroma_client.get_or_create_collection(
@@ -290,7 +334,7 @@ if __name__ == '__main__':
     )
     print('Got vector store')
 
-    series_to_process = [ 4 ]  # Series IDs to process
+    series_to_process = [ 3 ]  # Series IDs to process
 
     # Iterate over subdirectories in ./chunks
     for series_id in series_to_process:
@@ -310,6 +354,27 @@ if __name__ == '__main__':
                 doc_collection = load_chunk_from_disk(file)
                 # Embed documents and add them to the vector store
                 embed_documents(doc_collection, entities, vector_store, series_id=series_id)
+
+    vector_store = chroma_client.get_or_create_collection('story_sage_summaries', embedding_function=embedder)
+
+    for series_id in series_to_process:
+        series_info = next((series for series in series_list if series['series_id'] == series_id), None)
+        series_name = series_info['series_name']
+        series_metadata_name = series_info['series_metadata_name']
+        print(f'Processing summaries for series: {series_name} | {series_metadata_name} | {series_id}')
+        series_dir = f'./chunks/{series_metadata_name}/summary_chunks/'
+        if os.path.isdir(series_dir):
+            # Collect all .pkl and .json files in the series directory
+            chunk_files = glob.glob(f'{series_dir}/*.pkl') + glob.glob(f'{series_dir}/*.json')
+            if not chunk_files:
+                raise ValueError(f'No chunk files found in directory {series_dir}')
+            # Process chunks in the series directory
+            for file in tqdm(chunk_files, desc=f'Processing chunks for {series_name}'):
+                # Load documents from disk
+                doc_collection = load_summary_chunks(file)
+                # Embed documents and add them to the vector store
+                embed_documents(doc_collection, entities, vector_store, series_id=series_id)
+        
 
     """
     Example Results:

@@ -5,6 +5,11 @@ from typing import Tuple, Optional, Dict, List
 from .story_sage_state import StorySageState
 from .story_sage_retriever import StorySageRetriever
 from .story_sage_chain import StorySageChain
+from .story_sage_series import StorySageSeries
+from .story_sage_entities import StorySageEntities
+from .story_sage_book import StorySageBook
+from .story_sage_config import StorySageConfig
+import json
 
 class ConditionalRequestIDFormatter(logging.Formatter):
     """Custom formatter to include request_id only if it's not None."""
@@ -21,8 +26,7 @@ class StorySage:
     Coordinates between the retriever, chain, and state management components.
     """
 
-    def __init__(self, api_key: str, chroma_path: str, chroma_collection_name: str, 
-                 entities: dict, series_yml_path: str, n_chunks: int = 5):
+    def __init__(self, config_path: str = None, config: StorySageConfig = None):
         """Initialize the StorySage instance with necessary components and configuration."""
         # Set up logging
         self._logger = logging.getLogger(__name__)
@@ -46,16 +50,50 @@ class StorySage:
         # Create a LoggerAdapter to include class attributes
         self.logger = logging.LoggerAdapter(self._logger, {'request_id': self.request_id})
 
-        self.retriever = StorySageRetriever(chroma_path, chroma_collection_name, entities, n_chunks)
-        self.chain = StorySageChain(api_key, entities, self.retriever, self.logger)
-        
-        # Load series configuration
-        try:
-            with open(series_yml_path, 'r') as file:
-                self.series_dict = yaml.safe_load(file)
-        except Exception as e:
-            self.logger.error(f"Failed to load series configuration: {e}")
-            raise
+        if config_path:
+            # Load configuration from file
+            self.config = StorySageConfig(config_path)
+        else:
+            # Use provided configuration object
+            self.config = config
+
+        # Load entities
+        with open(self.config.entities_path, 'r') as f:
+            if self.config.entities_path.endswith('.json'):
+                entities_data = json.load(f)
+            else:
+                entities_data = yaml.safe_load(f)
+
+        entities = {}
+
+        for series_id, series_info in entities_data['series'].items():
+            series_entities = series_info.get("series_entities", {})
+            entities[str(series_id)] = StorySageEntities(
+                people_by_id=series_entities["people_by_id"],
+                people_by_name=series_entities["people_by_name"],
+                entity_by_id=series_entities["entity_by_id"],
+                entity_by_name=series_entities["entity_by_name"]
+            )
+        # Load series metadata and create StorySageSeries objects
+        with open(self.config.series_path, 'r') as f:
+            series_metadata = yaml.safe_load(f)
+        self.series_collection = {}
+        for series in series_metadata:
+            series_id_str = str(series["series_id"])
+            if series_id_str in entities.keys():
+                series_entities = entities[series_id_str]
+            else:
+                series_entities = None
+            self.series_collection[series_id_str] = StorySageSeries(
+                    series_id=series_id_str,
+                    series_name=series["series_name"],
+                    series_metadata_name=series["series_metadata_name"],
+                    books=[StorySageBook(**book) for book in series["books"]],
+                    entities=series_entities
+                )
+
+        self.retriever = StorySageRetriever(self.config, self.series_collection, self.logger)
+        self.chain = StorySageChain(self.config, self.series_collection, self.retriever, self.logger)
 
     def invoke(self, question: str, book_number: int = None, 
                chapter_number: int = None, series_id: int = None) -> Tuple[str, List[str]]:

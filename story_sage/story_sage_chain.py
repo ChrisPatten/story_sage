@@ -5,31 +5,40 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 from .story_sage_state import StorySageState
 from .story_sage_retriever import StorySageRetriever
-from .story_sage_stepback import StorySageStepback
+from .story_sage_config import StorySageConfig
+from .story_sage_series import StorySageSeries
+from .story_sage_entities import StorySageEntities
 import httpx
-from typing import Optional
+from typing import Optional, List
 
 
-class StorySageChain(StateGraph):
-    """Defines the chain of operations for the Story Sage system."""
+class StorySageChain:
+    """
+    A class to manage the processing chain for the Story Sage system.
 
-    def __init__(self, api_key: str, entities: dict, retriever: StorySageRetriever, logger: Optional[logging.Logger] = None):
+    Attributes:
+        config (StorySageConfig): Configuration object.
+        series_collection (list): List of StorySageSeries objects.
+        retriever (StorySageRetriever): Retriever object for fetching story elements.
+        logger (logging.LoggerAdapter): Logger for logging messages.
+    """
+
+    def __init__(self, config: StorySageConfig, series_collection: list[StorySageSeries], retriever: StorySageRetriever, logger: logging.LoggerAdapter):
         """
-        Initialize the StorySageChain instance.
+        Initialize the StorySageChain with the given configuration and series collection.
 
         Args:
-            api_key (str): The API key for the language model.
-            entities (dict): Dictionary containing character information.
-            retriever (StorySageRetriever): The retriever instance for fetching context.
-            logger (Optional[logging.Logger]): Logger instance for logging.
+            config (StorySageConfig): Configuration object.
+            series_collection (list): List of StorySageSeries objects.
+            retriever (StorySageRetriever): Retriever object for fetching story elements.
+            logger (logging.LoggerAdapter): Logger for logging messages.
         """
-        # Store entities and retriever for later use
-        self.entities = entities
+        self.config = config
+        self.series_collection = series_collection
         self.retriever = retriever
-        # Initialize the Stepback module to optimize queries
-        self.stepback = StorySageStepback(api_key=api_key)
-        # Set up the OpenAI language model with the provided API key
-        self.llm = ChatOpenAI(api_key=api_key, model='gpt-4o-mini', http_client=httpx.Client(verify=False))
+        self.logger = logger
+
+        self.llm = ChatOpenAI(api_key=self.config.openai_api_key, model='gpt-4o-mini', http_client=httpx.Client(verify=False))
         # Define the prompt template for generating responses
         self.prompt = PromptTemplate(
             input_variables=['question', 'context'],
@@ -70,7 +79,7 @@ class StorySageChain(StateGraph):
         graph_builder.add_edge("Generate", END)
         # Compile the graph
         self.graph = graph_builder.compile()
-  
+
     def get_characters(self, state: StorySageState) -> dict:
         """
         Extract entities mentioned in the user's question, filtered by series.
@@ -87,19 +96,19 @@ class StorySageChain(StateGraph):
         # Preprocess question for entity search
         question_text_search = ''.join(c for c in str.lower(state['question']) if c.isalpha() or c.isspace())
         if state.get('series_id'):
-            self.logger.debug("Series ID found in state.")
+            series_id_str = str(state['series_id'])
             # Convert the question to lowercase for case-insensitive search
             question_text_search = state['question'].lower()
-            series_id = state.get('series_id')
             # Retrieve series information based on series ID
-            for series_meta_name, series in self.entities['series'].items():
-                if series['series_id'] == series_id:
-                    series_info = series['series_entities']
-                    self.logger.debug(f'Series info found.: {series_info}')
-                    break
-            #self.logger.debug(f"Series info: {series_info}")
-            all_entities_by_name = {**series_info['people_by_name'], **series_info['entity_by_name']}
-            all_entities_by_id = {**series_info['people_by_id'], **series_info['entity_by_id']}
+            series: StorySageSeries = self.series_collection[series_id_str]
+            series_entities: StorySageEntities = series.entities if series else None
+            if series_entities is not None:
+                all_entities_by_name = {**series_entities.people_by_name, **series_entities.entity_by_name}
+                all_entities_by_id = {**series_entities.people_by_id, **series_entities.entity_by_id}
+            else:
+                self.logger.debug(f"No entities found for series ID {series_id}.")
+                all_entities_by_name = {}
+                all_entities_by_id = {}
             # Check if any entity names are mentioned in the question
             for name, id in all_entities_by_name.items():
                 if name in question_text_search:
@@ -112,6 +121,97 @@ class StorySageChain(StateGraph):
         return {
             'entities': list(entities_in_question),
         }
+    
+    def get_candidate_chapters(self, state: StorySageState) -> List[dict]:
+        """
+        Get candidate chapters that are likely to contain the answer to the user's question.
+
+        Args:
+            query_str (str): The user's query.
+            context_filters (dict): Dictionary containing context filters such as series, book, and chapter details.
+
+        Returns:
+            List[dict]: List of dictionaries containing book number and chapter number of candidate chapters.
+        """
+        # Retrieve summary chunks relevant to the query
+        filters = {'series_id': state['series_id'], 'book_number': state['book_number'], 'chapter_number': state['chapter_number']}
+        summary_chunks = self.retriever.retrieve_summary_chunks(state['question'], filters)
+
+        # Log the retrieved summary chunks for debugging purposes
+        self.logger.debug(f"Retrieved summary chunks: {summary_chunks}")
+
+        # Prepare the data to send to the LLM
+        candidate_chapters = []
+        for summary in summary_chunks:
+            for document in summary['documents']:
+                metadata = document['metadata']
+                candidate_chapters.append({
+                    'book_number': metadata['book_number'],
+                    'chapter_number': metadata['chapter_number'],
+                    'summary': document['document']
+                })
+
+        # Send the candidate chapters along with the user's question to the LLM
+        # Assuming there's a function `evaluate_candidates_with_llm` to interact with the LLM
+        likely_chapters = self._evaluate_candidates_with_llm(state['question'], candidate_chapters)
+
+        # Log the likely chapters for debugging purposes
+        self.logger.debug(f"Likely chapters: {likely_chapters}")
+
+        return { 'likely_chapters': likely_chapters }
+
+    def _evaluate_candidates_with_llm(self, query_str, candidate_chapters):
+        """
+        Evaluate candidate chapters with the LLM to determine which chapters are likely to contain the answer.
+
+        Args:
+            query_str (str): The user's query.
+            candidate_chapters (list): List of candidate chapters with their summaries.
+
+        Returns:
+            List[dict]: List of dictionaries containing book number and chapter number of likely chapters.
+        """
+        evaluation_prompt_templat = f"""
+You are a literary analysis expert helping to determine which chapters of a book are most relevant to answering a user's question. Your task is to evaluate each chapter summary and rate its likelihood of containing information relevant to the question. Do not answer the question itself.
+
+Consider the following when analyzing relevance:
+1. Direct mentions of key terms or characters from the question
+2. Related events or themes that might provide context
+3. Character interactions or developments relevant to the query
+4. World-building or background information that could inform the answer
+5. Chronological relevance to the question's context
+
+For each chapter summary, provide:
+- Relevance Score (0-10)
+- Brief explanation of why this chapter might be relevant
+- Key elements that match the question
+- Confidence level in the assessment (Low/Medium/High)
+
+Question: <user_question>
+Reading Progress: Book <X>, Chapter <Y>
+
+Chapter Summaries to Analyze:
+<list_of_chapter_summaries>
+
+Format your response as follows for each chapter:
+
+Chapter <N>:
+Relevance Score: [0-10]
+Confidence: [Low/Medium/High]
+Reasoning: [1-2 sentences explaining relevance]
+Key Elements: [bullet points of specific matching elements]
+---
+
+Only include chapters with a relevance score of 3 or higher in your response. Sort results by relevance score in descending order.
+
+Remember:
+- Do not reveal plot points beyond the user's reading progress
+- Focus on identifying relevant information, not answering the question
+- Consider both explicit and implicit connections to the question
+- Account for context that might be necessary for a complete answer
+
+        """
+        return candidate_chapters
   
     def get_context(self, state: StorySageState) -> dict:
         """
@@ -131,14 +231,9 @@ class StorySageChain(StateGraph):
             'book_number': state['book_number'],
             'chapter_number': state['chapter_number']
         }
-        # Optimize the query or fall back to the original question
-        optimized_query = self.stepback.optimize_query(state['question'])
-        if not optimized_query:
-            self.logger.debug("Failed to optimize query. Using original question.")
-            optimized_query = state['question']
         # Retrieve chunks of context based on the query and filters
         retrieved_docs = self.retriever.retrieve_chunks(
-            query_str=optimized_query,
+            query_str=state['question'],
             context_filters=context_filters
         )
 
@@ -146,7 +241,7 @@ class StorySageChain(StateGraph):
             self.logger.debug("No context retrieved. Rerun without character filters.")
             context_filters['entities'] = []
             retrieved_docs = self.retriever.retrieve_chunks(
-                query_str=optimized_query,
+                query_str=state['question'],
                 context_filters=context_filters
             )
 

@@ -11,8 +11,8 @@ with open('config.yml', 'r') as file:
 
 api_key = config['OPENAI_API_KEY']
 
-TARGET_SERIES_ID = 4  # The series_id of the target series
-TARGET_BOOK_NUMBERS = [ 7, 8, 9 ]  # List of book numbers to process
+TARGET_SERIES_ID = 3  # The series_id of the target series
+TARGET_BOOK_NUMBERS = [ 1 ]  # List of book numbers to process
 
 # Load series.yml to create a mapping from series_metadata_name to series_id
 with open('series.yml', 'r') as file:
@@ -62,7 +62,7 @@ for book_number in TARGET_BOOK_NUMBERS:
     target_filename = f'{target_file_path}/{book_metadata_name}.json'
 
     # Extract entities from the book chunks
-    entities_dict_list = extractor.extract(chunks[book_number])
+    entities_dict_list, summaries_list = extractor.extract(chunks[book_number])
 
     # Process the extracted entities
     processed_entities_list = extractor.process_entities(entities_dict_list)
@@ -70,5 +70,12 @@ for book_number in TARGET_BOOK_NUMBERS:
     # Save the processed entities to a file
     with open(target_filename, 'w') as json_file:
         json.dump(processed_entities_list, json_file, indent=4)
+
+    # Save the summary chunks to a file
+    summary_chunks_path = f'./chunks/{series_metadata_name}/summary_chunks'
+    if not os.path.exists(summary_chunks_path):
+        os.makedirs(summary_chunks_path)
+    with open(f'{summary_chunks_path}/{book_number}.json', 'w') as json_file:
+        json.dump(summaries_list, json_file, indent=4)
 
     print(f'Saved entities to {target_filename}')

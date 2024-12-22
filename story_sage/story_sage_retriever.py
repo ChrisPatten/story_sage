@@ -1,39 +1,45 @@
 # Import necessary libraries and modules
 import logging  # For logging debug information
 from .story_sage_embedder import StorySageEmbedder  # Custom embedder class for text embeddings
+from .story_sage_config import StorySageConfig  # Configuration class for Story Sage
 from typing import List  # For type annotations
 import chromadb  # ChromaDB client for vector storage and retrieval
 import logging
 
 class StorySageRetriever:
-    """Class responsible for retrieving relevant chunks of text based on the user's query."""
+    """
+    A class to retrieve story elements and context for the Story Sage system.
 
-    def __init__(self, chroma_path: str, chroma_collection_name: str,
-                 entities: dict, n_chunks: int = 5, logger: logging.Logger = None):
+    Attributes:
+        config (dict): Configuration dictionary.
+        series_collection (list): List of StorySageSeries objects.
+        logger (logging.LoggerAdapter): Logger for logging messages.
+    """
+
+    def __init__(self, config: StorySageConfig, series_collection: list, logger: logging.LoggerAdapter):
         """
-        Initialize the StorySageRetriever instance.
+        Initialize the StorySageRetriever with the given configuration and series collection.
 
         Args:
-            chroma_path (str): Path to the Chroma database.
-            chroma_collection_name (str): Name of the Chroma collection.
-            entities (dict): Dictionary containing character and entity information.
-            n_chunks (int, optional): Number of chunks to retrieve per query. Defaults to 5.
+            config (dict): Configuration dictionary.
+            series_collection (list): List of StorySageSeries objects.
+            logger (logging.LoggerAdapter): Logger for logging messages.
         """
+        self.config = config
+        self.series_collection = series_collection
+        self.logger = logger
+
         # Initialize the embedding function using StorySageEmbedder
         self.embedder = StorySageEmbedder()
         # Set up the ChromaDB client with persistent storage at the specified path
-        self.chroma_client = chromadb.PersistentClient(path=chroma_path)
+        self.chroma_client = chromadb.PersistentClient(path=self.config.chroma_path)
         # Get the vector store collection from ChromaDB using the embedder
         self.vector_store = self.chroma_client.get_collection(
-            name=chroma_collection_name,
+            name=self.config.chroma_collection,
             embedding_function=self.embedder
         )
-        # Store entities for filtering during retrieval
-        self.entities = entities
-        # Set the number of chunks to retrieve per query
-        self.n_chunks = n_chunks
-        # Initialize the logger for this module
-        self.logger = logger or logging.getLogger(__name__)
+
+    
 
     def retrieve_chunks(self, query_str, context_filters: dict) -> List[str]:
         """
@@ -96,7 +102,7 @@ class StorySageRetriever:
         # Query the vector store with the combined filter and retrieve the results
         query_result = self.vector_store.query(
             query_texts=[query_str],  # The user's query
-            n_results=self.n_chunks,  # Number of results to return
+            n_results=self.config.n_chunks,  # Number of results to return
             include=['metadatas', 'documents'],  # Include metadata and documents in the results
             where=combined_filter  # Apply the combined filter
         )
@@ -108,7 +114,7 @@ class StorySageRetriever:
             # Query the vector store again without entity filters
             query_result = self.vector_store.query(
                 query_texts=[query_str],  # The user's query
-                n_results=self.n_chunks,  # Number of results to return
+                n_results=self.config.n_chunks,  # Number of results to return
                 include=['metadatas', 'documents'],  # Include metadata and documents in the results
                 where=fallback_filter  # Apply the fallback filter
             )
@@ -117,3 +123,55 @@ class StorySageRetriever:
         self.logger.debug(f"Retrieved documents: {query_result}")
         # Return the query results
         return query_result
+
+    def retrieve_summary_chunks(self, query_str, context_filters: dict) -> List[str]:
+        """
+        Retrieve summary chunks relevant to the query and filtering parameters.
+
+        Args:
+            query_str (str): The user's query.
+            context_filters (dict): Dictionary containing context filters such as entities and book details.
+
+        Returns:
+            List[str]: Retrieved documents containing relevant context.
+        """
+        # Log the incoming query and filters for debugging
+        self.logger.debug(f"Retrieving summary chunks with query: {query_str}, context_filters: {context_filters}")
+
+        combined_filter = {'series_id': int(context_filters.get('series_id'))}  # Initialize the combined filter dictionary
+
+        # Extract book and chapter numbers, if present
+        book_number = context_filters.get('book_number')
+        chapter_number = context_filters.get('chapter_number')
+
+        # Build a filter to retrieve documents from earlier books or chapters
+        book_chapter_filter = {
+            '$or': [
+                {'book_number': {'$lt': book_number}},  # Books before the current one
+                {'$and': [  # Chapters before the current one in the same book
+                    {'book_number': book_number},
+                    {'chapter_number': {'$lt': chapter_number}}
+                ]}
+            ]
+        }
+
+        # Combine filters for book and chapter
+        combined_filter = {'$and': [combined_filter, book_chapter_filter]}
+
+        # Log the combined filter being used for the query
+        self.logger.debug(f"Combined filter: {combined_filter}")
+
+        # Query the vector store with the combined filter and retrieve the results
+        query_result = self.vector_store.query(
+            query_texts=[query_str],  # The user's query
+            n_results=self.config.n_chunks,  # Number of results to return
+            include=['metadatas', 'documents'],  # Include metadata and documents in the results
+            where=combined_filter  # Apply the combined filter
+        )
+
+        # Log the retrieved documents for debugging purposes
+        self.logger.debug(f"Retrieved summary documents: {query_result}")
+        # Return the query results
+        return query_result
+
+ 

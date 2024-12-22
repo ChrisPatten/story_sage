@@ -26,5 +26,8 @@ class StorySageState(TypedDict):
     entities: List[str]
     """List of entity IDs extracted from the question."""
 
-    series_id: int
+    series_id: str
     """The ID of the book series for context filtering."""
+
+    likely_chapters: List[int]
+    """List of likely chapter numbers based on the question."""
