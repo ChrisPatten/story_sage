@@ -72,19 +72,23 @@ feedback_handler = TimedRotatingFileHandler('logs/feedback.log', when='midnight'
 feedback_handler.setFormatter(log_formatter)
 feedback_logger.addHandler(feedback_handler)
 
+logger.debug('Loading config and data files')
 try:
     # Load configuration and data files
     with open(CONFIG_PATH, 'r') as file:
         config = yaml.safe_load(file)
+        logger.debug(f'Loaded {CONFIG_PATH}')
     with open(config['SERIES_PATH'], 'r') as file:
         series_list = yaml.safe_load(file)
+        logger.debug(f'LOADED {config["SERIES_PATH"]}')
     with open(config['ENTITIES_PATH'], 'r') as file:
         entities = yaml.safe_load(file)
+        logger.debug(f'LOADED {config["ENTITIES_PATH"]}')
 except Exception as e:
     # Log any errors that occur during the loading of configuration files
     logger.error(f"Error loading configuration files: {e}")
     raise
-
+    
 # Extract configuration settings
 api_key = config['OPENAI_API_KEY']
 chroma_path = config['CHROMA_PATH']
@@ -96,7 +100,7 @@ story_sage = StorySage(
     chroma_path=chroma_path,
     chroma_collection_name=chroma_collection,
     entities=entities,
-    series_yml_path='series.yml',
+    series_yml_path=config['SERIES_PATH'],
     n_chunks=10  # Number of text chunks to process
 )
 
