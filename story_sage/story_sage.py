@@ -87,7 +87,8 @@ class StorySage:
             series_id=series_id or 0,
             context=None,
             answer=None,
-            entities=[]
+            entities=[],
+            order_by='most_recent'
         )
 
         try:

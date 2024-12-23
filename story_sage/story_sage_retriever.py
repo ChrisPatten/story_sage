@@ -1,15 +1,15 @@
 # Import necessary libraries and modules
 import logging  # For logging debug information
 from .story_sage_embedder import StorySageEmbedder  # Custom embedder class for text embeddings
-from typing import List  # For type annotations
+from typing import List, Literal  # For type annotations
 import chromadb  # ChromaDB client for vector storage and retrieval
-import logging
 
 class StorySageRetriever:
     """Class responsible for retrieving relevant chunks of text based on the user's query."""
 
     def __init__(self, chroma_path: str, chroma_collection_name: str,
-                 entities: dict, n_chunks: int = 5, logger: logging.Logger = None):
+                 entities: dict, n_chunks: int = 5, logger: logging.Logger = None,
+                 min_similarity: float = 0.7):
         """
         Initialize the StorySageRetriever instance.
 
@@ -18,13 +18,14 @@ class StorySageRetriever:
             chroma_collection_name (str): Name of the Chroma collection.
             entities (dict): Dictionary containing character and entity information.
             n_chunks (int, optional): Number of chunks to retrieve per query. Defaults to 5.
+            min_similarity (float, optional): Minimum similarity threshold for retrieved chunks. Defaults to 0.7.
         """
         # Initialize the embedding function using StorySageEmbedder
         self.embedder = StorySageEmbedder()
         # Set up the ChromaDB client with persistent storage at the specified path
         self.chroma_client = chromadb.PersistentClient(path=chroma_path)
         # Get the vector store collection from ChromaDB using the embedder
-        self.vector_store = self.chroma_client.get_collection(
+        self.vector_store: chromadb.Collection = self.chroma_client.get_collection(
             name=chroma_collection_name,
             embedding_function=self.embedder
         )
@@ -34,14 +35,17 @@ class StorySageRetriever:
         self.n_chunks = n_chunks
         # Initialize the logger for this module
         self.logger = logger or logging.getLogger(__name__)
+        # Set the minimum similarity threshold for retrieved chunks
+        self.min_similarity = min_similarity
 
-    def retrieve_chunks(self, query_str, context_filters: dict) -> List[str]:
+    def retrieve_chunks(self, query_str: str, context_filters: dict, order_direction: Literal['earliest', 'most_recent']) -> List[str]:
         """
         Retrieve chunks of text relevant to the query and filtering parameters.
 
         Args:
             query_str (str): The user's query.
             context_filters (dict): Dictionary containing context filters such as entities and book details.
+            order_direction (Literal['earliest', 'most_recent']): Determines the order of retrieved chunks.
 
         Returns:
             List[str]: Retrieved documents containing relevant context.
@@ -49,7 +53,14 @@ class StorySageRetriever:
         # Log the incoming query and filters for debugging
         self.logger.debug(f"Retrieving chunks with query: {query_str}, context_filters: {context_filters}")
 
-        combined_filter = {'series_id': int(context_filters.get('series_id'))}  # Initialize the combined filter dictionary
+        # Determine the order direction for sorting
+        order_direction = 'asc' if order_direction == 'earliest' else 'desc'
+
+        # Increase the number of chunks to retrieve for better filtering
+        query_n_chunks = self.n_chunks * 10
+
+        # Initialize the combined filter dictionary with series ID
+        combined_filter = {'series_id': int(context_filters.get('series_id'))}
 
         # Extract book and chapter numbers, if present
         book_number = context_filters.get('book_number')
@@ -96,8 +107,8 @@ class StorySageRetriever:
         # Query the vector store with the combined filter and retrieve the results
         query_result = self.vector_store.query(
             query_texts=[query_str],  # The user's query
-            n_results=self.n_chunks,  # Number of results to return
-            include=['metadatas', 'documents'],  # Include metadata and documents in the results
+            n_results=query_n_chunks,  # Number of results to return
+            include=['metadatas', 'documents', 'distances'],  # Include metadata and documents in the results
             where=combined_filter  # Apply the combined filter
         )
 
@@ -108,12 +119,78 @@ class StorySageRetriever:
             # Query the vector store again without entity filters
             query_result = self.vector_store.query(
                 query_texts=[query_str],  # The user's query
-                n_results=self.n_chunks,  # Number of results to return
-                include=['metadatas', 'documents'],  # Include metadata and documents in the results
+                n_results=query_n_chunks,  # Number of results to return
+                include=['metadatas', 'documents', 'distances'],  # Include metadata and documents in the results
                 where=fallback_filter  # Apply the fallback filter
             )
 
-        # Log the retrieved documents for debugging purposes
-        self.logger.debug(f"Retrieved documents: {query_result}")
+        # Sort and filter the query results based on the order direction
+        sorted_query_results = self.get_chunks_for_context(query_result, order_direction)
+
         # Return the query results
-        return query_result
+        return sorted_query_results
+    
+    def get_chunks_for_context(self, data: dict, direction: str) -> List[tuple[int, int, str]]:
+        """
+        Returns a list of tuples containing book number, chapter number, and text.
+
+        Args:
+            data (dict): The query result data from the vector store.
+            direction (str): The order direction for sorting ('asc' or 'desc').
+
+        Returns:
+            List[tuple[int, int, str]]: Sorted and filtered chunks of text.
+        """
+        # Extract the ids list
+        if 'ids' not in data:
+            return []
+        else:
+            ids = data['ids'][0]
+
+        # Get the sorted indices based on the ids
+        sorted_indices = sorted(range(len(ids)), key=lambda i: ids[i], reverse=(direction == 'desc'))
+        results = []
+
+        for idx in sorted_indices:
+            # Skip chunks with similarity below the minimum threshold
+            if data['distances'][0][idx] < self.min_similarity:
+                self.logger.debug(f"Skipping chunk with similarity {data['distances'][0][idx]}")
+                continue
+            # Append the chunk to the results
+            results.append((data['metadatas'][0][idx]['book_number'], data['metadatas'][0][idx]['chapter_number'], data['documents'][0][idx]))
+
+        # Limit the results to the specified number of chunks
+        results = results[:self.n_chunks]
+
+        return results
+
+# Example usage:
+# Initialize the retriever
+retriever = StorySageRetriever(
+    chroma_path='/path/to/chroma',
+    chroma_collection_name='story_sage_collection',
+    entities={'series': {}},
+    n_chunks=5,
+    logger=logging.getLogger('StorySageRetriever')
+)
+
+# Retrieve chunks
+context_filters = {
+    'series_id': 1,
+    'book_number': 2,
+    'chapter_number': 3,
+    'entities': ['entity1', 'entity2']
+}
+chunks = retriever.retrieve_chunks(
+    query_str='What happened in the past?',
+    context_filters=context_filters,
+    order_direction='earliest'
+)
+
+# Example result:
+# [
+#     (1, 1, 'Text from book 1, chapter 1'),
+#     (1, 2, 'Text from book 1, chapter 2'),
+#     (2, 1, 'Text from book 2, chapter 1'),
+#     ...
+# ]

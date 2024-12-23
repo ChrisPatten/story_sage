@@ -14,3 +14,4 @@ booknlp/output/
 logs/*.log*
 *.json
 series.yml
+series_prod.yml

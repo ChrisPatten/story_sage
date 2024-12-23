@@ -8,7 +8,7 @@ from .story_sage_retriever import StorySageRetriever
 from .story_sage_stepback import StorySageStepback
 import httpx
 from typing import Optional
-
+import spacy
 
 class StorySageChain(StateGraph):
     """Defines the chain of operations for the Story Sage system."""
@@ -26,13 +26,17 @@ class StorySageChain(StateGraph):
         # Store entities and retriever for later use
         self.entities = entities
         self.retriever = retriever
+
+        # Load the spaCy NLP model
+        self.nlp = spacy.load("en_core_web_sm")
+
         # Initialize the Stepback module to optimize queries
         self.stepback = StorySageStepback(api_key=api_key)
         # Set up the OpenAI language model with the provided API key
         self.llm = ChatOpenAI(api_key=api_key, model='gpt-4o-mini', http_client=httpx.Client(verify=False))
         # Define the prompt template for generating responses
         self.prompt = PromptTemplate(
-            input_variables=['question', 'context'],
+            input_variables=['question', 'context', 'book_number', 'chapter_number'],
             template="""
                 HUMAN
 
@@ -44,6 +48,9 @@ class StorySageChain(StateGraph):
                 * Don't provide any irrelevant information.
                 * Use bullet points to provide excerpts from the context that support your answer. Reference the book and chapter whenever you include an excerpt.
                 * If there is no context, you can say that you don't have enough information to answer the question.
+
+                The reader is currently in Book {book_number}, Chapter {chapter_number}. Don't limit your responses to just this book. Answer the reader's question
+                taking into account all the context provided.
 
                 Question: {question} 
                 Context: {context} 
@@ -60,11 +67,13 @@ class StorySageChain(StateGraph):
 
         # Build the state graph for the chain's workflow
         graph_builder = StateGraph(StorySageState)
+        graph_builder.add_node("RouterFunction", self.router_function)
         graph_builder.add_node("GetCharacters", self.get_characters)
         graph_builder.add_node("GetContext", self.get_context)
         graph_builder.add_node("Generate", self.generate)
         # Define the sequence of operations
-        graph_builder.add_edge(START, "GetCharacters")
+        graph_builder.add_edge(START, "RouterFunction")
+        graph_builder.add_edge("RouterFunction", "GetCharacters")
         graph_builder.add_edge("GetCharacters", "GetContext")
         graph_builder.add_edge("GetContext", "Generate")
         graph_builder.add_edge("Generate", END)
@@ -87,7 +96,6 @@ class StorySageChain(StateGraph):
         # Preprocess question for entity search
         question_text_search = ''.join(c for c in str.lower(state['question']) if c.isalpha() or c.isspace())
         if state.get('series_id'):
-            self.logger.debug("Series ID found in state.")
             # Convert the question to lowercase for case-insensitive search
             question_text_search = state['question'].lower()
             series_id = state.get('series_id')
@@ -95,9 +103,8 @@ class StorySageChain(StateGraph):
             for series_meta_name, series in self.entities['series'].items():
                 if series['series_id'] == series_id:
                     series_info = series['series_entities']
-                    self.logger.debug(f'Series info found.: {series_info}')
+                    self.logger.debug(f'Series info found.')
                     break
-            #self.logger.debug(f"Series info: {series_info}")
             all_entities_by_name = {**series_info['people_by_name'], **series_info['entity_by_name']}
             all_entities_by_id = {**series_info['people_by_id'], **series_info['entity_by_id']}
             # Check if any entity names are mentioned in the question
@@ -131,15 +138,18 @@ class StorySageChain(StateGraph):
             'book_number': state['book_number'],
             'chapter_number': state['chapter_number']
         }
+        self.logger.debug(f"Context filters: {context_filters}")
         # Optimize the query or fall back to the original question
         optimized_query = self.stepback.optimize_query(state['question'])
         if not optimized_query:
             self.logger.debug("Failed to optimize query. Using original question.")
             optimized_query = state['question']
         # Retrieve chunks of context based on the query and filters
+        self.logger.debug(f"order by: {state['order_by']}")
         retrieved_docs = self.retriever.retrieve_chunks(
             query_str=optimized_query,
-            context_filters=context_filters
+            context_filters=context_filters,
+            order_direction=state['order_by']
         )
 
         if not retrieved_docs:
@@ -152,8 +162,8 @@ class StorySageChain(StateGraph):
 
         # Format the retrieved context for the prompt
         context = [
-            f"Book {meta['book_number']}, Chapter {meta['chapter_number']}: {doc}"
-            for meta, doc in zip(retrieved_docs['metadatas'][0], retrieved_docs['documents'][0])
+            f"Book {book_number}, Chapter {chapter_number}: {doc}"
+            for book_number, chapter_number, doc in retrieved_docs
         ]
         self.logger.debug(f"Context retrieved: {context}")
         # Return the context
@@ -173,10 +183,81 @@ class StorySageChain(StateGraph):
         docs_content = '\n\n'.join(state['context'])
         # Invoke the prompt with the question and context
         messages = self.prompt.invoke(
-            {'question': state['question'], 'context': docs_content}
+            {'question': state['question'], 'context': docs_content, 'book_number': state['book_number'], 'chapter_number': state['chapter_number']}
         )
         self.logger.debug(f"LLM prompt: {messages}")
         # Get the response from the language model
         response = self.llm.invoke(messages)
         # Return the generated answer
         return {'answer': response.content}
+
+    def router_function(self, state: StorySageState) -> StorySageState:
+        """
+        Router function to determine if the question is about the past or the present
+        and set the order_by property accordingly.
+
+        Args:
+            state (StorySageState): The current state of the system.
+
+        Returns:
+            StorySageState: The updated state with the order_by property set.
+        """
+        question = state['question'].lower()
+
+        # Use spaCy NLP model to analyze the question
+        doc = self.nlp(question)
+
+        # Default to 'most_recent' unless past tense is detected
+        tense = 'most_recent'
+
+        # Check for past tense verbs in the question
+        for token in doc:
+            if token.tag_ in ['VBD', 'VBN']:
+                tense = 'earliest'
+                break
+
+        # Set the order_by property based on the detected tense
+        state['order_by'] = tense
+        return state
+
+# Example usage:
+# Initialize the chain
+chain = StorySageChain(
+    api_key='your_api_key',
+    entities={'series': {}},
+    retriever=StorySageRetriever(
+        chroma_path='/path/to/chroma',
+        chroma_collection_name='story_sage_collection',
+        entities={'series': {}},
+        n_chunks=5,
+        logger=logging.getLogger('StorySageRetriever')
+    ),
+    logger=logging.getLogger('StorySageChain')
+)
+
+# Example state
+state = StorySageState(
+    question='What happened in the past?',
+    context=[],
+    answer='',
+    book_number=2,
+    chapter_number=3,
+    entities=['entity1', 'entity2'],
+    series_id=1,
+    order_by='most_recent'
+)
+
+# Run the chain
+result = chain.run(state)
+
+# Example result:
+# {
+#     'question': 'What happened in the past?',
+#     'context': ['Book 1, Chapter 1: Text from book 1, chapter 1', ...],
+#     'answer': 'Here is what happened in the past...',
+#     'book_number': 2,
+#     'chapter_number': 3,
+#     'entities': ['entity1', 'entity2'],
+#     'series_id': 1,
+#     'order_by': 'earliest'
+# }

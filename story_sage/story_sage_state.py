@@ -1,4 +1,4 @@
-from typing import List, TypedDict
+from typing import List, TypedDict, Literal
 
 class StorySageState(TypedDict):
     """
@@ -28,3 +28,6 @@ class StorySageState(TypedDict):
 
     series_id: int
     """The ID of the book series for context filtering."""
+
+    order_by: Literal['earliest', 'most_recent']
+    """Determines whether chunks should be returned starting with earliest or most recent."""
