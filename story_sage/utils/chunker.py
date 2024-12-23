@@ -60,7 +60,7 @@ class StorySageChunker:
         """
         chapter_pattern = re.compile(
             r'^\s*(CHAPTER)\s+(\d+|\w+)',
-            re.IGNORECASE
+            re.IGNORECASE | re.MULTILINE
         )
     
         text_dict = OrderedDict()
