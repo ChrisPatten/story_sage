@@ -163,34 +163,3 @@ class StorySageRetriever:
         results = results[:self.n_chunks]
 
         return results
-
-# Example usage:
-# Initialize the retriever
-retriever = StorySageRetriever(
-    chroma_path='/path/to/chroma',
-    chroma_collection_name='story_sage_collection',
-    entities={'series': {}},
-    n_chunks=5,
-    logger=logging.getLogger('StorySageRetriever')
-)
-
-# Retrieve chunks
-context_filters = {
-    'series_id': 1,
-    'book_number': 2,
-    'chapter_number': 3,
-    'entities': ['entity1', 'entity2']
-}
-chunks = retriever.retrieve_chunks(
-    query_str='What happened in the past?',
-    context_filters=context_filters,
-    order_direction='earliest'
-)
-
-# Example result:
-# [
-#     (1, 1, 'Text from book 1, chapter 1'),
-#     (1, 2, 'Text from book 1, chapter 2'),
-#     (2, 1, 'Text from book 2, chapter 1'),
-#     ...
-# ]

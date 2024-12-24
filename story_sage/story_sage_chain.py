@@ -95,16 +95,23 @@ class StorySageChain(StateGraph):
         entities_in_question = set()
         # Preprocess question for entity search
         question_text_search = ''.join(c for c in str.lower(state['question']) if c.isalpha() or c.isspace())
+        series_info = None
         if state.get('series_id'):
             # Convert the question to lowercase for case-insensitive search
             question_text_search = state['question'].lower()
-            series_id = state.get('series_id')
+            series_id = int(state.get('series_id'))
             # Retrieve series information based on series ID
-            for series_meta_name, series in self.entities['series'].items():
+            for series_id_str, series in self.entities['series'].items():
                 if series['series_id'] == series_id:
                     series_info = series['series_entities']
                     self.logger.debug(f'Series info found.')
                     break
+           
+            if not series_info:
+                self.logger.error(f'Series info not found in entities!')
+                self.logger.debug(f"Entities dict: {self.entities}")
+                raise ValueError('Series info not found in entities.')
+
             all_entities_by_name = {**series_info['people_by_name'], **series_info['entity_by_name']}
             all_entities_by_id = {**series_info['people_by_id'], **series_info['entity_by_id']}
             # Check if any entity names are mentioned in the question
@@ -219,45 +226,3 @@ class StorySageChain(StateGraph):
         # Set the order_by property based on the detected tense
         state['order_by'] = tense
         return state
-
-# Example usage:
-# Initialize the chain
-chain = StorySageChain(
-    api_key='your_api_key',
-    entities={'series': {}},
-    retriever=StorySageRetriever(
-        chroma_path='/path/to/chroma',
-        chroma_collection_name='story_sage_collection',
-        entities={'series': {}},
-        n_chunks=5,
-        logger=logging.getLogger('StorySageRetriever')
-    ),
-    logger=logging.getLogger('StorySageChain')
-)
-
-# Example state
-state = StorySageState(
-    question='What happened in the past?',
-    context=[],
-    answer='',
-    book_number=2,
-    chapter_number=3,
-    entities=['entity1', 'entity2'],
-    series_id=1,
-    order_by='most_recent'
-)
-
-# Run the chain
-result = chain.run(state)
-
-# Example result:
-# {
-#     'question': 'What happened in the past?',
-#     'context': ['Book 1, Chapter 1: Text from book 1, chapter 1', ...],
-#     'answer': 'Here is what happened in the past...',
-#     'book_number': 2,
-#     'chapter_number': 3,
-#     'entities': ['entity1', 'entity2'],
-#     'series_id': 1,
-#     'order_by': 'earliest'
-# }

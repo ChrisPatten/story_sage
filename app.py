@@ -89,7 +89,7 @@ story_sage = StorySage(
     chroma_path=chroma_path,
     chroma_collection_name=chroma_collection,
     entities=entities,
-    series_yml_path='series.yml',
+    series=series_list,
     n_chunks=10  # Number of text chunks to process
 )
 

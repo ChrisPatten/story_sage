@@ -22,12 +22,12 @@ class StorySage:
     """
 
     def __init__(self, api_key: str, chroma_path: str, chroma_collection_name: str, 
-                 entities: dict, series_yml_path: str, n_chunks: int = 5):
+                 entities: dict, series: dict, n_chunks: int = 5):
         """Initialize the StorySage instance with necessary components and configuration."""
         # Set up logging
         self._logger = logging.getLogger(__name__)
-        self._logger.setLevel(logging.DEBUG)
-        self._logger.propagate = True  # Allow logs to root logger
+        self._logger.setLevel(logging.INFO)
+        self._logger.propagate = False  # Allow logs to root logger
 
         # Create handler for logger
         handler = logging.StreamHandler()
@@ -49,13 +49,7 @@ class StorySage:
         self.retriever = StorySageRetriever(chroma_path, chroma_collection_name, entities, n_chunks)
         self.chain = StorySageChain(api_key, entities, self.retriever, self.logger)
         
-        # Load series configuration
-        try:
-            with open(series_yml_path, 'r') as file:
-                self.series_dict = yaml.safe_load(file)
-        except Exception as e:
-            self.logger.error(f"Failed to load series configuration: {e}")
-            raise
+        self.series_dict = series
 
     def invoke(self, question: str, book_number: int = None, 
                chapter_number: int = None, series_id: int = None) -> Tuple[str, List[str]]:
@@ -103,4 +97,4 @@ class StorySage:
             
         except Exception as e:
             self.logger.error(f"Error processing question: {e}")
-            raise
+            raise e
