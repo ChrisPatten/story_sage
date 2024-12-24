@@ -45,7 +45,7 @@ class StorySageChain(StateGraph):
 
                 Guidelines for the response:
                 * If you don't know the answer or aren't sure, just say that you don't know. 
-                * Don't provide any irrelevant information.
+                * Don't provide any information about the books except for what's in the context.
                 * Use bullet points to provide excerpts from the context that support your answer. Reference the book and chapter whenever you include an excerpt.
                 * If there is no context, you can say that you don't have enough information to answer the question.
 
