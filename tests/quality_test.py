@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).parent.parent))
 from story_sage.story_sage import StorySage
 import yaml
 import json
@@ -5,8 +9,9 @@ import markdown
 from tqdm import tqdm
 
 # Define paths to configuration files
-config_path = './config.yml'
-test_config_path = './test_config.yml'
+config_path = Path(__file__).parent.parent / 'config.yml'
+test_config_path = Path(__file__).parent / 'test_config.yml'
+results_path = Path(__file__).parent / 'quality_test_results.html'
 
 try:
     # Load configuration and data files
@@ -33,7 +38,8 @@ story_sage = StorySage(
     chroma_collection_name=chroma_collection,
     entities=entities,
     series=series_list,
-    n_chunks=10  # Number of text chunks to process
+    n_chunks=10,
+    log_level='CRITICAL'
 )
 
 def get_answer(question, series_id, book_number, chapter_number):
@@ -56,7 +62,7 @@ def get_answer(question, series_id, book_number, chapter_number):
         'series_id': series_id
     }
     result, context, request_id = story_sage.invoke(**data)
-    return result
+    return result, context
 
 def get_html_results(results):
     """
@@ -68,17 +74,49 @@ def get_html_results(results):
     Returns:
         str: An HTML string representing the results in a table format.
     """
+
+    page_css = """
+body {
+    font-family: Arial, sans-serif;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th, td {
+    border: 1px solid #ddd;
+    padding: 8px;
+}
+
+th {
+    background-color: #f2f2f2;
+    text-align: left;
+}
+    """
+
+    output = f'<html><head><style>{page_css}</style></head><body><div>'
     html_table = f'<table><tr><th>Question</th>'
+    context_table = f'<table><tr><th>Question</th>'
     for book_number in results[0][1]:
         html_table += f'<th>Book {book_number}</th>'
+        context_table += f'<th>Book {book_number}</th>'
     html_table += "</tr>"
+    context_table += "</tr>"
     for question, book_numbers, answers in results:
         html_table += f'<tr><td>{question}</td>'
+        context_table += f'<tr><td>{question}</td>'
         for answer in answers:
-            html_table += f'<td>{markdown.markdown(answer)}</td>'
+            answer_list = '\n\n'.join(answer[1])
+            html_table += f'<td>{markdown.markdown(answer[0])}</td>'
+            context_table += f'<td>{markdown.markdown(answer_list)}</td>'
         html_table += "</tr>"
+        context_table += "</tr>"
     html_table += "</table>"
-    return f'<html><head><link rel="stylesheet" href="test_result_styles.css"></head><body><div>{html_table}</div></body></html>'
+    context_table += "</table>"
+    output += html_table + '</div><div>' + context_table + '</div></body></html>'
+    return output
 
 # Load test configuration settings
 question_list = test_config['question_list']
@@ -91,10 +129,10 @@ results = []
 for question in tqdm(question_list, desc='Getting responses to questions'):
     question_result = (question, book_numbers, [])
     for book in book_numbers:
-        result = get_answer(question, series_number, book, chapter_number=99)
-        question_result[2].append(result)
+        result, context = get_answer(question, series_number, book, chapter_number=99)
+        question_result[2].append((result, context))
     results.append(question_result)
 
 # Write the results to an HTML file
-with open('quality_test_results.html', 'w') as file:
+with open(results_path, 'w') as file:
     file.write(get_html_results(results))
