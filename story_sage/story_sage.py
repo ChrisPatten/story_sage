@@ -22,11 +22,11 @@ class StorySage:
     """
 
     def __init__(self, api_key: str, chroma_path: str, chroma_collection_name: str, 
-                 entities: dict, series: dict, n_chunks: int = 5):
+                 entities: dict, series: dict, n_chunks: int = 5, log_level: str = 'INFO'):
         """Initialize the StorySage instance with necessary components and configuration."""
         # Set up logging
         self._logger = logging.getLogger(__name__)
-        self._logger.setLevel(logging.INFO)
+        self._logger.setLevel(log_level)
         self._logger.propagate = False  # Allow logs to root logger
 
         # Create handler for logger
