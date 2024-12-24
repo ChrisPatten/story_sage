@@ -64,6 +64,16 @@
             padding: 10px 15px;
             max-width: 75%;
         }
+        .context-output {
+            max-width: 600px;
+            margin: 20px auto;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #dee2e6;
+            overflow-y: auto;
+            max-height: 200px;
+        }
     </style>
 </head>
 <body>
@@ -93,6 +103,10 @@
                 <button type="submit" id="submit-question" class="btn btn-primary ml-2"><i class="fas fa-paper-plane"></i></button>
             </form>
         </div>
+    </div>
+    <h4>Context Returned:</h4>
+    <div class="context-output" id="contextOutput">
+        <!-- Context will be displayed here -->
     </div>
     <footer class="text-center mt-4">
         Made with Copilot by Chris Patten. &copy; 2024
@@ -258,6 +272,10 @@
                         // Optional: Handle context and request_id if needed
                         console.log('Context:', result.context);
                         console.log('Request ID:', result.request_id);
+
+                        // Display context in the output box
+                        const contextOutput = document.getElementById('contextOutput');
+                        contextOutput.innerHTML = `<strong>Context:</strong><br>${result.context.join('<br>')}`;
                     } else {
                         // Handle errors returned by the server
                         const errorMessage = document.createElement('div');
