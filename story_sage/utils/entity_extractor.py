@@ -106,19 +106,19 @@ class StorySageEntityExtractor():
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": """
-                    You are a highly advanced natural language processing agent that 
-                    is optimized to perform named entity recognition (NER). Your goal is to
-                    extract entities from text provided to you.
+Please perform the following tasks on the given book passage:
 
-                    For example, if the text is:
-                        Alice saw the White Rabbit while sitting by the river.
+1. Extract all entities mentioned in the passage, including people, places, groups, animals, and objects. Present them in lists called 'people' and 'entities'
+Example Input:
+"Alice followed the White Rabbit into Wonderland. She met the Cheshire Cat and the Queen of Hearts sitting by the maze holding teacups."
 
-                    Extract:
-                        People: Alice, White Rabbit
-                        Places: river
-                        Groups: []
-                        Animals: rabbit
-                        Objects: []
+Example Output:
+{
+"people": ["Alice", "White Rabbit", "Cheshire Cat", "Queen of Hearts"],
+"entities": ["Wonderland", "maze", "teacups"]
+}
+
+Passage:
                     """},
                 {"role": "user", "content": text},
             ],
@@ -256,10 +256,7 @@ class StorySageEntityExtractor():
             objects (List[str]): List of object entities.
         """
         people: list[str]
-        places: list[str]
-        groups: list[str]
-        animals: list[str]
-        objects: list[str]
+        entities: list[str]
 
         def items(self):
             return self.model_dump().items()

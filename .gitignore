@@ -13,4 +13,5 @@ booknlp/output/
 !requirements.txt
 logs/*.log*
 *.json
-series.yml
+series*.yml
+!series.example.yml

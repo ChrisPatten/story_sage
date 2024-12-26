@@ -102,7 +102,7 @@ class StorySageRetriever:
         )
 
         # If no results are found, retry the query without entity filters
-        if len(query_result) == 0 and len(entity_filters) > 0:
+        if len(query_result) == 0:
             # Log that we are retrying the query without entity filters
             self.logger.debug("Retrying query without entity filters")
             # Query the vector store again without entity filters

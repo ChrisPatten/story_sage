@@ -65,19 +65,30 @@ log_handler = TimedRotatingFileHandler('logs/story_sage.log', when='midnight', b
 log_handler.setFormatter(log_formatter)
 logger.addHandler(log_handler)
 
+# Configure feedback logging
+feedback_logger = logging.getLogger('feedback')
+feedback_logger.setLevel(logging.INFO)
+feedback_handler = TimedRotatingFileHandler('logs/feedback.log', when='midnight', backupCount=30)
+feedback_handler.setFormatter(log_formatter)
+feedback_logger.addHandler(feedback_handler)
+
+logger.debug('Loading config and data files')
 try:
     # Load configuration and data files
     with open(CONFIG_PATH, 'r') as file:
         config = yaml.safe_load(file)
+        logger.debug(f'Loaded {CONFIG_PATH}')
     with open(config['SERIES_PATH'], 'r') as file:
         series_list = yaml.safe_load(file)
+        logger.debug(f'LOADED {config["SERIES_PATH"]}')
     with open(config['ENTITIES_PATH'], 'r') as file:
         entities = yaml.safe_load(file)
+        logger.debug(f'LOADED {config["ENTITIES_PATH"]}')
 except Exception as e:
     # Log any errors that occur during the loading of configuration files
     logger.error(f"Error loading configuration files: {e}")
     raise
-
+    
 # Extract configuration settings
 api_key = config['OPENAI_API_KEY']
 chroma_path = config['CHROMA_PATH']
@@ -89,7 +100,7 @@ story_sage = StorySage(
     chroma_path=chroma_path,
     chroma_collection_name=chroma_collection,
     entities=entities,
-    series_yml_path='series.yml',
+    series_yml_path=config['SERIES_PATH'],
     n_chunks=10  # Number of text chunks to process
 )
 
@@ -202,14 +213,14 @@ def feedback():
         }
     """
     data = request.get_json()
-    required_keys = ['request_id', 'feedback']
+    required_keys = ['request_id', 'feedback', 'type']
     if not all(key in data for key in required_keys):
         # Return an error if any required parameter is missing
         return jsonify({'error': f'Missing parameter! Request must include {", ".join(required_keys)}'}), 400
 
     try:
         # Process the feedback here (e.g., save to a database or log)
-        logger.info(f"Feedback received for request {data['request_id']}: {data['feedback']}")
+        feedback_logger.info(f"Feedback received for request {data['request_id']}|{data['feedback']}|{data['type']}")
         return jsonify({'message': 'Feedback received.'})
     except Exception as e:
         # Log the error and return a server error response
