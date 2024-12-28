@@ -103,6 +103,11 @@ class StorySageEntityCollection():
         Args:
             entity_groups (List[StorySageEntityGroup], optional): Initial list of entity groups. Defaults to empty list.
         """
+        # Validate that entity_groups is a list of StorySageEntityGroup objects
+        for group in entity_groups:
+            if not isinstance(group, StorySageEntityGroup):
+                raise ValueError("All elements in entity_groups must be of type StorySageEntityGroup")
+
         self.entity_groups: List[StorySageEntityGroup] = entity_groups
 
     def add_entity_group(self, entity_group: StorySageEntityGroup):
@@ -193,18 +198,25 @@ class StorySageEntityCollection():
             >>> collection = StorySageEntityCollection.from_json(json_str)
         """
         data = json.loads(json_str)
+        entity_groups = [cls._dict_to_group(group_dict) for group_dict in data['entity_groups']]
+        return cls(entity_groups)
+    
+    @classmethod
+    def from_dict(cls, data: dict):
+        """Creates a StorySageEntityCollection instance from a dictionary.
 
-        def dict_to_entity(entity_dict):
-            return StorySageEntity(
-                entity_name=entity_dict['entity_name'],
-                entity_type=entity_dict['entity_type']
-            )
+        Args:
+            data (dict): Dictionary containing entity group data
 
-        def dict_to_group(group_dict):
-            entities = [dict_to_entity(entity_dict) for entity_dict in group_dict['entities']]
-            return StorySageEntityGroup(entities, entity_group_id=group_dict['entity_group_id'])
+        Returns:
+            StorySageEntityCollection: New instance populated with data from the dictionary
 
-        entity_groups = [dict_to_group(group_dict) for group_dict in data['entity_groups']]
+        Example:
+            >>> data = {'entity_groups': [...]}
+            >>> collection = StorySageEntityCollection.from_dict(data)
+        """
+
+        entity_groups = [cls._dict_to_group(group_dict) for group_dict in data['entity_groups']]
         return cls(entity_groups)
     
     @classmethod
@@ -266,3 +278,15 @@ class StorySageEntityCollection():
 
         # Remove group2 from the collection
         self.entity_groups.remove(group2)
+
+    @classmethod
+    def _dict_to_entity(cls, entity_dict):
+        return StorySageEntity(
+            entity_name=entity_dict['entity_name'],
+            entity_type=entity_dict['entity_type']
+        )
+    
+    @classmethod
+    def _dict_to_group(cls, group_dict):
+        entities = [cls._dict_to_entity(entity_dict) for entity_dict in group_dict['entities']]
+        return StorySageEntityGroup(entities, entity_group_id=group_dict['entity_group_id'])

@@ -5,6 +5,8 @@ from typing import Tuple, Optional, Dict, List
 from .data_classes.story_sage_state import StorySageState
 from .vector_store import StorySageRetriever
 from .story_sage_chain import StorySageChain
+from .story_sage_entity import StorySageEntityCollection
+from .data_classes.story_sage_series import StorySageSeries
 
 class ConditionalRequestIDFormatter(logging.Formatter):
     """Custom formatter to include request_id only if it's not None."""
@@ -22,40 +24,33 @@ class StorySage:
     """
 
     def __init__(self, api_key: str, chroma_path: str, chroma_collection_name: str, 
-                 entities: dict, series_yml_path: str, n_chunks: int = 5):
+                 entities_dict: dict[str, dict], series_list: List[dict], n_chunks: int = 5):
         """Initialize the StorySage instance with necessary components and configuration."""
         # Set up logging
         self._logger = logging.getLogger(__name__)
         self._logger.setLevel(logging.DEBUG)
         self._logger.propagate = True  # Allow logs to root logger
-
-        # Create handler for logger
         handler = logging.StreamHandler()
         handler.setLevel(logging.DEBUG)
-
-        # Define the custom formatter
         formatter = ConditionalRequestIDFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
-
-        # Add the handler to the logger
         self._logger.addHandler(handler)
 
         # Initialize request_id
         self.request_id = None
 
+        # Initialize entities
+        self.entities = {key: StorySageEntityCollection.from_dict(value) for key, value in entities_dict.items()}
+
+        # Initialize series info
+        self.series_list = [StorySageSeries.from_dict(series) for series in series_list]
+
         # Create a LoggerAdapter to include class attributes
         self.logger = logging.LoggerAdapter(self._logger, {'request_id': self.request_id})
 
-        self.retriever = StorySageRetriever(chroma_path, chroma_collection_name, entities, n_chunks)
-        self.chain = StorySageChain(api_key, entities, self.retriever, self.logger)
+        self.retriever = StorySageRetriever(chroma_path, chroma_collection_name, n_chunks)
+        self.chain = StorySageChain(api_key, self.entities, self.series_list, self.retriever, self.logger)
         
-        # Load series configuration
-        try:
-            with open(series_yml_path, 'r') as file:
-                self.series_dict = yaml.safe_load(file)
-        except Exception as e:
-            self.logger.error(f"Failed to load series configuration: {e}")
-            raise
 
     def invoke(self, question: str, book_number: int = None, 
                chapter_number: int = None, series_id: int = None) -> Tuple[str, List[str]]:
@@ -102,4 +97,4 @@ class StorySage:
             
         except Exception as e:
             self.logger.error(f"Error processing question: {e}")
-            raise
+            raise e

@@ -58,7 +58,10 @@ class StorySageSeries:
         Returns:
             StorySageSeries: An instance of StorySageSeries.
         """
-        entity_settings = EntitySettings(**data['entity_settings'])
+        if 'entity_settings' in data:
+            entity_settings = EntitySettings(**data['entity_settings'])
+        else:
+            entity_settings = EntitySettings(names_to_skip=[], person_titles=[])
         books = [Book(**book) for book in data['books']]
         return cls(
             series_id=data['series_id'],

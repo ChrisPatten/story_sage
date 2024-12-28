@@ -6,25 +6,39 @@ from langchain_core.prompts import PromptTemplate
 from .data_classes.story_sage_state import StorySageState
 from .vector_store import StorySageRetriever
 from .story_sage_stepback import StorySageStepback
+from .story_sage_entity import StorySageEntityCollection, StorySageEntity
+from .data_classes.story_sage_series import StorySageSeries
 import httpx
-from typing import Optional
+from typing import Optional, List
 
 
 class StorySageChain(StateGraph):
     """Defines the chain of operations for the Story Sage system."""
 
-    def __init__(self, api_key: str, entities: dict, retriever: StorySageRetriever, logger: Optional[logging.Logger] = None):
+    def __init__(self, api_key: str, entities: dict[str, StorySageEntityCollection], 
+                 series_list: List[StorySageSeries], retriever: StorySageRetriever, 
+                 logger: Optional[logging.Logger] = None):
         """
         Initialize the StorySageChain instance.
 
         Args:
             api_key (str): The API key for the language model.
-            entities (dict): Dictionary containing character information.
+            entities (dict[str, StorySageEntityCollection]): Dictionary containing character information.
             retriever (StorySageRetriever): The retriever instance for fetching context.
             logger (Optional[logging.Logger]): Logger instance for logging.
         """
+
+        # Validate that entities is a dictionary with keys of type str and values of type StorySageEntityCollection
+        if not isinstance(entities, dict) or not all(isinstance(k, str) and isinstance(v, StorySageEntityCollection) for k, v in entities.items()):
+            raise ValueError("entities must be a dictionary with keys of type str and values of type StorySageEntityCollection")
+        # Validate that series_list is a list of StorySageSeries objects
+        if not isinstance(series_list, list) or not all(isinstance(series, StorySageSeries) for series in series_list):
+            raise ValueError("series_list must be a list of StorySageSeries objects")
+        
+        
         # Store entities and retriever for later use
         self.entities = entities
+        self.series_list = series_list
         self.retriever = retriever
         # Initialize the Stepback module to optimize queries
         self.stepback = StorySageStepback(api_key=api_key)
@@ -88,26 +102,17 @@ class StorySageChain(StateGraph):
         question_text_search = ''.join(c for c in str.lower(state['question']) if c.isalpha() or c.isspace())
         if state.get('series_id'):
             self.logger.debug("Series ID found in state.")
+            series_info = next((series for series in self.series_list if series.series_id == state['series_id']), None)
             # Convert the question to lowercase for case-insensitive search
             question_text_search = state['question'].lower()
-            series_id = state.get('series_id')
-            # Retrieve series information based on series ID
-            for series_meta_name, series in self.entities['series'].items():
-                if series['series_id'] == series_id:
-                    series_info = series['series_entities']
-                    self.logger.debug(f'Series info found.: {series_info}')
-                    break
-            #self.logger.debug(f"Series info: {series_info}")
-            all_entities_by_name = {**series_info['people_by_name'], **series_info['entity_by_name']}
-            all_entities_by_id = {**series_info['people_by_id'], **series_info['entity_by_id']}
-            # Check if any entity names are mentioned in the question
-            for name, id in all_entities_by_name.items():
-                if name in question_text_search:
-                    entities_in_question.add(id)
-
-        # Log the entities found
-        entities_strs = ' | '.join([f"{id}: {all_entities_by_id[id]}" for id in entities_in_question])
-        self.logger.debug(f'Entities: {entities_strs}')
+            series_entities = self.entities.get(series_info.series_metadata_name)
+            if series_entities:
+                entities = series_entities.get_all_entities()
+                # Check if any entity names are mentioned in the question
+                for entity in entities:
+                    if entity.entity_name in question_text_search:
+                        entities_in_question.add(entity.entity_group_id)
+                self.logger.debug(f'Found entities for series: {series_info.series_name}')
         # Return the entities as lists
         return {
             'entities': list(entities_in_question),
@@ -131,14 +136,9 @@ class StorySageChain(StateGraph):
             'book_number': state['book_number'],
             'chapter_number': state['chapter_number']
         }
-        # Optimize the query or fall back to the original question
-        optimized_query = self.stepback.optimize_query(state['question'])
-        if not optimized_query:
-            self.logger.debug("Failed to optimize query. Using original question.")
-            optimized_query = state['question']
         # Retrieve chunks of context based on the query and filters
         retrieved_docs = self.retriever.retrieve_chunks(
-            query_str=optimized_query,
+            query_str=state['question'],
             context_filters=context_filters
         )
 
@@ -146,7 +146,7 @@ class StorySageChain(StateGraph):
             self.logger.debug("No context retrieved. Rerun without character filters.")
             context_filters['entities'] = []
             retrieved_docs = self.retriever.retrieve_chunks(
-                query_str=optimized_query,
+                query_str=state['question'],
                 context_filters=context_filters
             )
 

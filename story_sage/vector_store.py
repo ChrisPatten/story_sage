@@ -53,7 +53,7 @@ class StorySageRetriever:
     """Class responsible for retrieving relevant chunks of text based on the user's query."""
 
     def __init__(self, chroma_path: str, chroma_collection_name: str,
-                 entities: dict, n_chunks: int = 5, logger: logging.Logger = None):
+                 n_chunks: int = 5, logger: logging.Logger = None):
         """
         Initialize the StorySageRetriever instance.
 
@@ -72,8 +72,6 @@ class StorySageRetriever:
             name=chroma_collection_name,
             embedding_function=self.embedder
         )
-        # Store entities for filtering during retrieval
-        self.entities = entities
         # Set the number of chunks to retrieve per query
         self.n_chunks = n_chunks
         # Initialize the logger for this module

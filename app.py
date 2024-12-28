@@ -41,6 +41,7 @@ import pickle
 import glob
 import os
 import re
+import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import warnings
@@ -81,9 +82,6 @@ try:
     with open(config['SERIES_PATH'], 'r') as file:
         series_list = yaml.safe_load(file)
         logger.debug(f'LOADED {config["SERIES_PATH"]}')
-    with open(config['ENTITIES_PATH'], 'r') as file:
-        entities = yaml.safe_load(file)
-        logger.debug(f'LOADED {config["ENTITIES_PATH"]}')
 except Exception as e:
     # Log any errors that occur during the loading of configuration files
     logger.error(f"Error loading configuration files: {e}")
@@ -94,13 +92,34 @@ api_key = config['OPENAI_API_KEY']
 chroma_path = config['CHROMA_PATH']
 chroma_collection = config['CHROMA_COLLECTION']
 
+def collect_entities(series_metadata_names):
+    entities_dict = {}
+    for name in series_metadata_names:
+        try:
+            if not os.path.exists(f'./entities/{name}/entities.json'):
+                logger.warning(f'Entities file for {name} does not exist.')
+                continue
+            with open(f'./entities/{name}/entities.json', 'r') as file:
+                entities_data = json.load(file)
+                entities_dict[name] = entities_data
+                logger.debug(f'Loaded entities for {name}')
+        except Exception as e:
+            logger.error(f"Error loading entities for {name}: {e}")
+    return entities_dict
+
+# Collect series metadata names from the series list
+series_metadata_names = [series['series_metadata_name'] for series in series_list]
+
+# Load the entity files using the collect_entities function
+entities_dict = collect_entities(series_metadata_names)
+
 # Initialize the StorySage engine with the provided configurations
 story_sage = StorySage(
     api_key=api_key,
     chroma_path=chroma_path,
     chroma_collection_name=chroma_collection,
-    entities=entities,
-    series_yml_path=config['SERIES_PATH'],
+    entities_dict=entities_dict,
+    series_list=series_list,
     n_chunks=10  # Number of text chunks to process
 )
 
