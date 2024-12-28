@@ -2,8 +2,8 @@ import logging
 import yaml
 import uuid
 from typing import Tuple, Optional, Dict, List
-from .story_sage_state import StorySageState
-from .story_sage_retriever import StorySageRetriever
+from .data_classes.story_sage_state import StorySageState
+from .vector_store import StorySageRetriever
 from .story_sage_chain import StorySageChain
 
 class ConditionalRequestIDFormatter(logging.Formatter):

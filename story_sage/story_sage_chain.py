@@ -3,8 +3,8 @@ import logging
 from langgraph.graph import START, END, StateGraph
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
-from .story_sage_state import StorySageState
-from .story_sage_retriever import StorySageRetriever
+from .data_classes.story_sage_state import StorySageState
+from .vector_store import StorySageRetriever
 from .story_sage_stepback import StorySageStepback
 import httpx
 from typing import Optional
