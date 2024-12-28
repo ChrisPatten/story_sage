@@ -52,6 +52,8 @@ import os
 import yaml
 import json
 import argparse
+from story_sage.utils.local_entity_extractor import StorySageEntityExtractor
+from story_sage.story_sage_entity import StorySageEntityCollection
 
 def load_chunk_from_disk(file_path: str) -> List[Document]:
     """
@@ -172,27 +174,34 @@ class Embedder(EmbeddingFunction):
             embedded_documents.append(embedded_document)
         return embedded_documents
 
-def embed_documents(doc_collection: List[Document], entities: dict,
+def embed_documents(doc_collection: List[Document], series_info: dict,
                     vector_store: Collection, series_id: int) -> None:
     """
     Embed documents and add them to the vector store with metadata.
 
     Args:
         doc_collection (List[Document]): List of Document objects to be embedded.
-        entities (dict): Dictionary containing entity information for the series.
+        series_info (dict): Dictionary containing series information.
         vector_store (Collection): ChromaDB collection to store the embeddings.
         series_id (int): Identifier for the series.
-
-    Example:
-        >>> embed_documents(doc_collection, entities, vector_store, series_id=3)
     """
     ids = []
     documents_to_encode = []
     document_metadata = []
-    series_id_key = str(series_id)
-    series = entities['series'][series_id_key]
-    series_entities = series['series_entities']
     doc_seq = 0  # Sequence counter for documents
+    
+    # Load existing entities if available
+    series_metadata_name = series_info['series_metadata_name']
+    entity_file_path = f'./entities/{series_metadata_name}/entities.json'
+    if os.path.exists(entity_file_path):
+        with open(entity_file_path, 'r') as file:
+            entity_collection = StorySageEntityCollection.from_json(file.read())
+
+    if not entity_collection:
+        raise ValueError(f'Entity collection not found for series {series_metadata_name}')
+    
+    entities_by_name = entity_collection.get_group_ids_by_name()
+    allowed_characters_pattern = r'[^a-z\s-]'
 
     for doc in doc_collection:
         book_number = doc.metadata['book_number']
@@ -203,18 +212,13 @@ def embed_documents(doc_collection: List[Document], entities: dict,
         ids.append(f'{series_id}_{book_number}_{chapter_number}_{doc_seq}')
         doc_seq += 1
 
-        # Clean the document content for entity matching
-        cleaned_page_content = ''.join(c for c in str.lower(doc.page_content) if c.isalpha() or c.isspace())
+        entities_in_doc = set()
 
-        # Add entity presence flags to metadata
-        # ChromaDB doesn't support "where in" filters, so create a metadata field for each entity with value True
-        for name, id in series_entities['people_by_name'].items():
-            if name in cleaned_page_content:
-                doc.metadata[id] = True
-
-        for name, id in series_entities['entity_by_name'].items():
-            if name in cleaned_page_content:
-                doc.metadata[id] = True
+        # Extract entities for this document
+        for entity_name, entity_group_id in entities_by_name.items():
+            if entity_name in re.sub(allowed_characters_pattern, '', doc.page_content.lower(), flags=re.IGNORECASE):
+                entities_in_doc.add(entity_name)
+                doc.metadata[entity_group_id] = True
 
         documents_to_encode.append(doc.page_content)
         document_metadata.append(doc.metadata)
@@ -290,7 +294,7 @@ if __name__ == '__main__':
     )
     print('Got vector store')
 
-    series_to_process = [ 4 ]  # Series IDs to process
+    series_to_process = [ 3 ]  # Series IDs to process
 
     # Iterate over subdirectories in ./chunks
     for series_id in series_to_process:
@@ -309,7 +313,7 @@ if __name__ == '__main__':
                 # Load documents from disk
                 doc_collection = load_chunk_from_disk(file)
                 # Embed documents and add them to the vector store
-                embed_documents(doc_collection, entities, vector_store, series_id=series_id)
+                embed_documents(doc_collection, series_info, vector_store, series_id=series_id)
 
     """
     Example Results:

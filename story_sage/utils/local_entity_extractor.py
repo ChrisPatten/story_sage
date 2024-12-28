@@ -43,7 +43,8 @@ class StorySageEntityExtractor():
                  model_name: str = 'urchade/gliner_base', 
                  device: str = 'cpu',
                  similarity_threshold: float = 0.7,
-                 chunk_max_length: int = 350):
+                 chunk_max_length: int = 350,
+                 existing_collection: StorySageEntityCollection = None):
         """
         Initializes the StorySageEntityExtractor with the given parameters.
 
@@ -57,6 +58,7 @@ class StorySageEntityExtractor():
             device (str, optional): The device to run the model on ('cpu' or 'cuda'). Defaults to 'cpu'.
             similarity_threshold (float, optional): The cosine similarity threshold for grouping entities. Defaults to 0.7.
             chunk_max_length (int, optional): The maximum length of text chunks to process at once. Defaults to 350.
+            existing_collection (StorySageEntityCollection, optional): Existing entity collection to extend. Defaults to None.
 
         Example:
             >>> series_data = {
@@ -83,9 +85,10 @@ class StorySageEntityExtractor():
         self.model.to(torch.device(device))
         self.target_series_info = StorySageSeries.from_dict(series)
         self.entities: List[GroupType] = []
-        self.entity_collection: StorySageEntityCollection = None
+        self.entity_collection = existing_collection
         self.similarity_threshold = similarity_threshold
         self.chunk_max_length = chunk_max_length
+        self.vectorizer = None
 
 
     def _clean_string(self, text: str, 
@@ -276,16 +279,28 @@ class StorySageEntityExtractor():
         entity_strings = set()
         for entities in entities_dict.values():
             for entity in entities:
-                entity_strings.add(self._clean_string(entity))
-        
-        self.vectorizer = TfidfVectorizer()
-        self.vectorizer.fit_transform(entity_strings)
+                cleaned = self._clean_string(entity)
+                if cleaned:
+                    entity_strings.add(cleaned)
 
-        for entity in tqdm(entity_strings, desc='Grouping entities'):
-            self._add_new_string_to_groups(entity)
+        # Initialize vectorizer with existing entities if available
+        existing_strings = set()
+        if self.entity_collection:
+            for group in self.entity_collection.entity_groups:
+                for entity in group.entities:
+                    existing_strings.add(entity.entity_name)
+        
+        # Fit vectorizer on combined strings
+        all_strings = entity_strings.union(existing_strings)
+        self.vectorizer = TfidfVectorizer()
+        self.vectorizer.fit(all_strings)
+
+        # If we have existing entities, transform their vectors with new vectorizer
+        self.entities = []  # Reset to rebuild with new vectors
+        for string in tqdm(all_strings, desc='Grouping entities'):
+            self._add_new_string_to_groups(string)
 
         self.entity_collection = StorySageEntityCollection.from_sets(self.entities)
-
         return self.entity_collection
 
     def regroup_entities(self, new_threshold: float = 0.7) -> List[GroupType]:
