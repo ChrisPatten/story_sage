@@ -43,16 +43,15 @@ from typing import List
 import re
 from uuid import uuid4
 import chromadb
-from chromadb import Documents, EmbeddingFunction, Embeddings, Collection
+from chromadb import Documents, EmbeddingFunction, Embeddings, Collection, GetResult
 from sentence_transformers import SentenceTransformer
 import torch
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 import glob
 import os
 import yaml
 import json
 import argparse
-from story_sage.utils.local_entity_extractor import StorySageEntityExtractor
 from story_sage.story_sage_entity import StorySageEntityCollection
 
 def load_chunk_from_disk(file_path: str) -> List[Document]:
@@ -228,6 +227,47 @@ def embed_documents(doc_collection: List[Document], series_info: dict,
         documents=documents_to_encode,
         metadatas=document_metadata,
         ids=ids
+    )
+
+def update_tagged_entities(vector_store: Collection, entity_collection: StorySageEntityCollection, series_id: int, book_number: int = None) -> None:
+    """
+    Update tagged entities in the vector store with metadata.
+
+    Args:
+        vector_store (Collection): ChromaDB collection containing the embeddings.
+        entity_collection (StorySageEntityCollection): Collection of tagged entities.
+        series_id (int): Identifier for the series.
+    """
+    entities_by_name = entity_collection.get_group_ids_by_name()
+    allowed_characters_pattern = r'[^a-z\s-]'
+
+    where_document = {'series_id': series_id}
+    if book_number is not None:
+        where_document = { '$and': [ {'series_id': series_id}, {'book_number': book_number } ]}
+
+    # Get all documents in the vector store
+    results: GetResult = vector_store.get(where=where_document)
+
+    ids_to_update = []
+    metadatas_to_update = []
+
+    for idx, document in tqdm(enumerate(results['documents']), desc='Updating tagged entities'):
+        entities_in_doc = set()
+        document_metadata = { 'series_id': series_id, 'book_number': results['metadatas'][idx]['book_number'], 'chapter_number': results['metadatas'][idx]['chapter_number'] }
+
+        # Extract entities for this document
+        for entity_name, entity_group_id in entities_by_name.items():
+            if entity_name in re.sub(allowed_characters_pattern, '', document.lower(), flags=re.IGNORECASE):
+                entities_in_doc.add(entity_name)
+                document_metadata[entity_group_id] = True
+
+        ids_to_update.append(results['ids'][idx])
+        metadatas_to_update.append(document_metadata)
+
+    # Update documents and their metadata in the vector store
+    vector_store.update(
+        metadatas=metadatas_to_update,
+        ids=ids_to_update
     )
 
 if __name__ == '__main__':
