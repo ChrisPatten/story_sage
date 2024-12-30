@@ -3,9 +3,11 @@ import json
 from story_sage.utils.chunker import StorySageChunker
 from tqdm import tqdm
 
-SERIES_NAME = 'the_expanse'
+SERIES_NAME = 'harry_potter'
 
-file_path = f'./books/{SERIES_NAME}/02_*.txt'
+
+
+file_path = f'./books/{SERIES_NAME}/*.txt'
 
 """
 Text Chunking Utility
@@ -39,8 +41,8 @@ if __name__ == '__main__':
             chunks = chunker.process_file(
                 text=full_text,
                 context_window=2,
-                percentile_threshold=85,
-                min_chunk_size=3
+                percentile_threshold=80,
+                min_chunk_size=4
             )
 
             if not os.path.exists(f'chunks/{SERIES_NAME}'):
