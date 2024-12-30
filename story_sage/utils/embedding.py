@@ -173,8 +173,9 @@ class Embedder(EmbeddingFunction):
             embedded_documents.append(embedded_document)
         return embedded_documents
 
-def embed_documents(doc_collection: List[Document], series_info: dict,
-                    vector_store: Collection, series_id: int) -> None:
+def embed_documents(doc_collection: List[Document],
+                    vector_store: Collection, series_id: int, 
+                    entity_collection: StorySageEntityCollection) -> None:
     """
     Embed documents and add them to the vector store with metadata.
 
@@ -188,21 +189,11 @@ def embed_documents(doc_collection: List[Document], series_info: dict,
     documents_to_encode = []
     document_metadata = []
     doc_seq = 0  # Sequence counter for documents
-    
-    # Load existing entities if available
-    series_metadata_name = series_info['series_metadata_name']
-    entity_file_path = f'./entities/{series_metadata_name}/entities.json'
-    if os.path.exists(entity_file_path):
-        with open(entity_file_path, 'r') as file:
-            entity_collection = StorySageEntityCollection.from_json(file.read())
 
-    if not entity_collection:
-        raise ValueError(f'Entity collection not found for series {series_metadata_name}')
-    
     entities_by_name = entity_collection.get_group_ids_by_name()
     allowed_characters_pattern = r'[^a-z\s-]'
 
-    for doc in doc_collection:
+    for doc in tqdm(doc_collection, desc='Identifying characters in documents'):
         book_number = doc.metadata['book_number']
         chapter_number = doc.metadata['chapter_number']
         doc.metadata['series_id'] = series_id
@@ -222,12 +213,13 @@ def embed_documents(doc_collection: List[Document], series_info: dict,
         documents_to_encode.append(doc.page_content)
         document_metadata.append(doc.metadata)
 
-    # Add documents and their embeddings to the vector store
-    vector_store.upsert(
-        documents=documents_to_encode,
-        metadatas=document_metadata,
-        ids=ids
-    )
+    batch_size = 1000
+    for i in tqdm(range(0, len(documents_to_encode), batch_size), desc='Upserting documents in batches'):
+        vector_store.upsert(
+            documents=documents_to_encode[i:i+batch_size],
+            metadatas=document_metadata[i:i+batch_size],
+            ids=ids[i:i+batch_size]
+        )
 
 def update_tagged_entities(vector_store: Collection, entity_collection: StorySageEntityCollection, series_id: int, book_number: int = None) -> None:
     """
@@ -247,11 +239,11 @@ def update_tagged_entities(vector_store: Collection, entity_collection: StorySag
 
     # Get all documents in the vector store
     results: GetResult = vector_store.get(where=where_document)
-
+    num_documents = len(results['documents'])
     ids_to_update = []
     metadatas_to_update = []
 
-    for idx, document in tqdm(enumerate(results['documents']), desc='Updating tagged entities'):
+    for idx, document in tqdm(enumerate(results['documents']), desc='Updating tagged entities', total=num_documents):
         entities_in_doc = set()
         document_metadata = { 'series_id': series_id, 'book_number': results['metadatas'][idx]['book_number'], 'chapter_number': results['metadatas'][idx]['chapter_number'] }
 
@@ -307,6 +299,8 @@ if __name__ == '__main__':
                         help='Path to the entities.json file (default: entities.json)')
     parser.add_argument('--config_path', type=str, default='config.yml',
                         help='Path to the config.yml file (default: config.yml)')
+    parser.add_argument('--series_id', type=list[int], default=None,
+                        help='Series ID to process (default: None)')
     args = parser.parse_args()
 
     # Load the series list from the provided path
@@ -325,6 +319,9 @@ if __name__ == '__main__':
     chroma_client = chromadb.PersistentClient(path=config['CHROMA_PATH'])
     embedder = Embedder()
 
+    if args.series_id is not None:
+        series_to_process = args.series_id
+
     #chroma_client.delete_collection(config['CHROMA_COLLECTION'])  # Delete the collection if it already exists
 
     # Get or create a collection in the vector store
@@ -333,8 +330,6 @@ if __name__ == '__main__':
         embedding_function=embedder
     )
     print('Got vector store')
-
-    series_to_process = [ 3 ]  # Series IDs to process
 
     # Iterate over subdirectories in ./chunks
     for series_id in series_to_process:

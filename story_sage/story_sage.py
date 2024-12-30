@@ -24,8 +24,19 @@ class StorySage:
     """
 
     def __init__(self, api_key: str, chroma_path: str, chroma_collection_name: str, 
-                 entities_dict: dict[str, dict], series_list: List[dict], n_chunks: int = 5):
-        """Initialize the StorySage instance with necessary components and configuration."""
+                 entities_dict: dict[str, StorySageEntityCollection],
+                 series_list: List[dict] = [], n_chunks: int = 5):
+        """
+        Initialize the StorySage instance with necessary components and configuration.
+
+        Args:
+            api_key: API key for accessing external services
+            chroma_path: Path to the chroma database
+            chroma_collection_name: Name of the chroma collection
+            entities_dict: Dictionary of {<series_metadata_name>: <StorySageEntityCollection>}
+            series_list: List of series information
+            n_chunks: Number of chunks for the retriever to process
+        """
         # Set up logging
         self._logger = logging.getLogger(__name__)
         self._logger.setLevel(logging.DEBUG)
@@ -39,7 +50,6 @@ class StorySage:
         # Initialize request_id
         self.request_id = None
 
-        # Initialize entities
         self.entities = {key: StorySageEntityCollection.from_dict(value) for key, value in entities_dict.items()}
 
         # Initialize series info
@@ -48,6 +58,7 @@ class StorySage:
         # Create a LoggerAdapter to include class attributes
         self.logger = logging.LoggerAdapter(self._logger, {'request_id': self.request_id})
 
+        # Initialize retriever and chain components
         self.retriever = StorySageRetriever(chroma_path, chroma_collection_name, n_chunks)
         self.chain = StorySageChain(api_key, self.entities, self.series_list, self.retriever, self.logger)
         
@@ -64,7 +75,7 @@ class StorySage:
             series_id: Optional series ID for context filtering
 
         Returns:
-            Tuple containing (answer, context_list)
+            Tuple containing (answer, context_list, request_id)
         """
         self.logger.info(f"Processing question: {question}")
         
@@ -98,3 +109,15 @@ class StorySage:
         except Exception as e:
             self.logger.error(f"Error processing question: {e}")
             raise e
+
+# Example usage:
+# Initialize StorySage with required parameters
+# story_sage = StorySage(api_key="your_api_key", chroma_path="path/to/chroma", chroma_collection_name="collection_name")
+
+# Invoke the system with a question
+# answer, context, request_id = story_sage.invoke(question="Who is the main character?", book_number=1, chapter_number=1, series_id=1)
+
+# Example result:
+# answer: "The main character is Rand al'Thor."
+# context: ["Rand al'Thor is introduced in the first chapter of the first book."]
+# request_id: "123e4567-e89b-12d3-a456-426614174000"

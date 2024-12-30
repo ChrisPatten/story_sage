@@ -38,6 +38,10 @@ class StorySageEntity():
         hash_input = (entity_name + entity_type).encode('utf-8')
         self.entity_id = hashlib.md5(hash_input).hexdigest()
 
+    def __str__(self):
+        """Returns a string representation of the StorySageEntity object."""
+        return f"Entity: {self.entity_name} ({self.entity_type})"
+
 
 class StorySageEntityGroup():
     """A class representing a group of related entities in the StorySage system.
@@ -82,6 +86,48 @@ class StorySageEntityGroup():
         self.entities.append(entity)
         entity.entity_group_id = self.entity_group_id
 
+    def remove_entity_by_id(self, entity_id: str):
+        """Removes an entity from the group based on its ID.
+
+        Args:
+            entity_id (str): The ID of the entity to remove
+
+        Raises:
+            ValueError: If the entity ID is not found in the group
+        """
+        entity = next((entity for entity in self.entities if entity.entity_id == entity_id), None)
+
+        if not entity:
+            raise ValueError("Entity ID not found in the group")
+
+        self.entities.remove(entity)
+
+
+    def get_names(self):
+        """Returns a list of entity names in the group.
+
+        Returns:
+            List[str]: List of entity names in the group
+
+        Example:
+            >>> group.get_names()
+            ['John Smith', 'Johnny']
+        """
+        return [entity.entity_name for entity in self.entities]
+
+    def __iter__(self):
+        """Allows iteration over all entities in the group."""
+        for entity in self.entities:
+            yield entity
+
+    def __len__(self):
+        """Returns the total number of entities in the group."""
+        return len(self.entities)
+    
+    def __getitem__(self, index):
+        """Allows subscriptable access to entities in the group by index."""
+        return self.entities[index]
+
 class StorySageEntityCollection():
     """A class managing collections of entity groups in the StorySage system.
 
@@ -117,6 +163,22 @@ class StorySageEntityCollection():
             entity_group (StorySageEntityGroup): The entity group to add to the collection
         """
         self.entity_groups.append(entity_group)
+
+    def remove_entity_group(self, entity_group_id: str):
+        """Removes an entity group from the collection based on its ID.
+
+        Args:
+            entity_group_id (str): The ID of the group to remove
+
+        Raises:
+            ValueError: If the group ID is not found in the collection
+        """
+        group = next((group for group in self.entity_groups if group.entity_group_id == entity_group_id), None)
+
+        if not group:
+            raise ValueError("Group ID not found in the collection")
+
+        self.entity_groups.remove(group)
 
     def get_names_by_group_id(self):
         """Creates a mapping of group IDs to lists of entity names.
@@ -220,7 +282,7 @@ class StorySageEntityCollection():
         return cls(entity_groups)
     
     @classmethod
-    def from_sets(cls, entity_list: List[GroupType]):
+    def from_sets(cls, entity_list: List[List[str]]):
         """Creates a StorySageEntityCollection from a list of entity groups.
 
         Args:
@@ -235,7 +297,7 @@ class StorySageEntityCollection():
         """
         entity_groups = []
         for entry in entity_list:
-            entities = [StorySageEntity(entity_name=entity) for entity in entry[2]]
+            entities = [StorySageEntity(entity_name=entity) for entity in entry]
             entity_group = StorySageEntityGroup(entities)
             entity_groups.append(entity_group)
         return cls(entity_groups)
@@ -256,28 +318,24 @@ class StorySageEntityCollection():
             all_entities.extend(group.entities)
         return all_entities
     
-    def merge_groups(self, group_id1: str, group_id2: str):
+    @classmethod
+    def merge_groups(cls, group_1: StorySageEntityGroup, group_2: StorySageEntityGroup) -> StorySageEntityGroup:
         """Merges two groups into one, combining their entities.
 
         Args:
-            group_id1 (str): The ID of the first group to merge
-            group_id2 (str): The ID of the second group to merge
-
-        Raises:
-            ValueError: If either group ID is not found in the collection
+            group_1 (StorySageEntityGroup): The group to merge into
+            group_2 (StorySageEntityGroup): The group to merge from
+        
+        Returns:
+            StorySageEntityGroup: group_1 with entities from group_2 merged in
         """
-        group1 = next((group for group in self.entity_groups if group.entity_group_id == group_id1), None)
-        group2 = next((group for group in self.entity_groups if group.entity_group_id == group_id2), None)
-
-        if not group1 or not group2:
-            raise ValueError("One or both group IDs not found in the collection")
 
         # Merge entities from group2 into group1
-        for entity in group2.entities:
-            group1.add_entity(entity)
-
-        # Remove group2 from the collection
-        self.entity_groups.remove(group2)
+        for entity in group_2.entities:
+            if entity.entity_name not in [e.entity_name for e in group_1.entities]:
+                group_1.add_entity(entity)
+        
+        return group_1
 
     @classmethod
     def _dict_to_entity(cls, entity_dict):
@@ -290,3 +348,25 @@ class StorySageEntityCollection():
     def _dict_to_group(cls, group_dict):
         entities = [cls._dict_to_entity(entity_dict) for entity_dict in group_dict['entities']]
         return StorySageEntityGroup(entities, entity_group_id=group_dict['entity_group_id'])
+    
+    def __iter__(self):
+        """Allows iteration over all entities in the collection."""
+        for group in self.entity_groups:
+            yield group
+
+    def __len__(self):
+        """Returns the total number of groups in the collection."""
+        return len(self.entity_groups)
+    
+    def to_dict(self):
+        """Converts the entity collection to a dictionary representation.
+
+        Returns:
+            dict: Dictionary containing all entity and group data
+
+        Example:
+            >>> data = collection.to_dict()
+            >>> print(type(data))
+            <class 'dict'>
+        """
+        return json.loads(self.to_json())

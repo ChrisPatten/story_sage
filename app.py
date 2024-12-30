@@ -111,7 +111,9 @@ def collect_entities(series_metadata_names):
 series_metadata_names = [series['series_metadata_name'] for series in series_list]
 
 # Load the entity files using the collect_entities function
-entities_dict = collect_entities(series_metadata_names)
+with open(config['ENTITIES_PATH'], 'r') as file:
+    entities_dict = json.load(file)
+    logger.debug(f'Loaded {config["ENTITIES_PATH"]}')
 
 # Initialize the StorySage engine with the provided configurations
 story_sage = StorySage(
@@ -120,7 +122,7 @@ story_sage = StorySage(
     chroma_collection_name=chroma_collection,
     entities_dict=entities_dict,
     series_list=series_list,
-    n_chunks=10  # Number of text chunks to process
+    n_chunks=15  # Number of text chunks to process
 )
 
 @app.route('/')

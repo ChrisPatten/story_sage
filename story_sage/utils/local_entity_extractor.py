@@ -6,19 +6,22 @@ and grouping them based on similarity. It uses the GLiNER model for entity extra
 and TF-IDF vectorization with cosine similarity for entity grouping.
 """
 
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 from gliner import GLiNER
 from gliner.model import GLiNER
 import torch
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.preprocessing import normalize
+from sklearn.cluster import DBSCAN
 from scipy.sparse import spmatrix, vstack, csr_matrix
 import numpy as np
 import re
 from langchain_core.documents.base import Document
 from typing import List, Dict, Set, Tuple
 from story_sage.data_classes.story_sage_series import StorySageSeries
-from story_sage.story_sage_entity import StorySageEntityCollection, GroupType
+from story_sage.story_sage_entity import StorySageEntityCollection, StorySageEntityGroup, StorySageEntity, GroupType
+import json
 
 
 
@@ -81,7 +84,7 @@ class StorySageEntityExtractor():
             >>> extractor = StorySageEntityExtractor(series_data, model_name='urchade/gliner_base', device='cpu')
         """
 
-        self.model = GLiNER.from_pretrained(model_name)
+        self.model = GLiNER.from_pretrained(model_name, model_kwargs={'model_max_length': 512, 'use_fast': False})
         self.model.to(torch.device(device))
         self.target_series_info = StorySageSeries.from_dict(series)
         self.entities: List[GroupType] = []
@@ -133,16 +136,26 @@ class StorySageEntityExtractor():
                         'child', 'sister', 'woman', 'women', 'man', 'men', 'people', 
                         'boy', 'boys', 'girl', 'girls', 'someone', 'one', 'children', 
                         'friend', 'husband', 'husbands', 'father', 'mother']
+        words_to_strip = ['a', 'an', 'the', 'of']
+
         names_to_skip = names_to_skip + default_skip if names_to_skip else default_skip
         
-        titles_pattern = r"^(?:" + '|'.join(person_titles) + r"\\s+)|(?:\\s+" + \
-                        '|'.join(person_titles) + r")$"
+        titles_pattern = r'^(?:-?)(?:' + '|'.join(person_titles) + r'\s+)|(?:\s+' + \
+                        '|'.join(person_titles) + r')$'
+        
+        words_to_strip_pattern = r'^\s?(?:' + '|'.join(words_to_strip) + r')\s+'
+
+        starts_to_remove_pattern = r'^[a-z]\s|-\w\s?'
         
         allowed_characters_pattern = r'[^a-z\s-]'
         
         # Remove titles using regex
         cleaned_text = re.sub(allowed_characters_pattern, '', text.strip().lower(), flags=re.IGNORECASE)
-        cleaned_text = re.sub(titles_pattern, '', cleaned_text, flags=re.IGNORECASE|re.MULTILINE)
+        cleaned_text = re.sub(titles_pattern, '', cleaned_text.strip(), flags=re.IGNORECASE|re.MULTILINE)
+        cleaned_text = re.sub(titles_pattern, '', cleaned_text.strip(), flags=re.IGNORECASE|re.MULTILINE) # Do this twice to catch multiple titles for a person
+        cleaned_text = re.sub(words_to_strip_pattern, '', cleaned_text.strip(), flags=re.IGNORECASE|re.MULTILINE)
+        cleaned_text = re.sub(starts_to_remove_pattern, '', cleaned_text.strip(), flags=re.IGNORECASE|re.MULTILINE)
+        cleaned_text = cleaned_text.strip()
         
         if len(cleaned_text) > min_len and len(cleaned_text) < max_len:
             if cleaned_text.startswith('of '):
@@ -247,8 +260,200 @@ class StorySageEntityExtractor():
                         entities_dict[entity["label"]].append(entity["text"])
         
         return entities_dict
+    
+    def _get_dbscan_clusters(self, vectors: spmatrix, strings: List[str], eps: float = 0.5, min_samples: int = 2) -> StorySageEntityCollection:
+        """Groups strings using DBSCAN clustering based on cosine similarity.
 
-    def get_grouped_entities(self, documents: list[Document], labels: list[str] = ['CHARACTER']) -> List[GroupType]:
+        This method uses DBSCAN clustering to group strings based on cosine similarity
+        and returns the resulting clusters as a StorySageEntityCollection.
+
+        Args:
+            strings (List[str]): List of strings to cluster
+            eps (float, optional): Maximum distance between samples for clustering. Defaults to 0.5.
+            min_samples (int, optional): Minimum number of samples for a cluster. Defaults to 2.
+
+        Returns:
+            StorySageEntityCollection: Collection of grouped entities
+
+        Example:
+            >>> strings = ["John", "Johnny", "Paris", "London"]
+            >>> clusters = extractor._get_dbscan_clusters(strings)
+            >>> print(len(clusters.entity_groups))
+            2
+        """
+
+        # Vectorize the input strings
+
+        dbscan = DBSCAN(eps=eps, min_samples=min_samples)
+
+        vectors = normalize(vectors, norm='l2', axis=1)
+
+        clustering = dbscan.fit(vectors)
+        labels = clustering.labels_
+
+
+        # Create a dictionary to store the clusters
+        clusters = {}
+        for entity, label in zip(strings, labels):
+            if label not in clusters:
+                clusters[label] = []
+            clusters[label].append(entity)
+
+        # Remove the noise cluster
+        noise_cluster: StorySageEntityGroup = StorySageEntityGroup(entities=[])
+        if -1 in clusters:
+            for entity in clusters[-1]:
+                noise_cluster.add_entity(StorySageEntity(entity))
+            del clusters[-1]
+
+        clusters_list = [clusters[key] for key in clusters.keys()]
+
+        return StorySageEntityCollection.from_sets(clusters_list), noise_cluster
+
+    def _merge_single_entities(self, entities_collection: StorySageEntityCollection, verbose: bool = False) -> StorySageEntityCollection:
+        if verbose:
+            print('---------------------------------')
+            print('Merging single-entity groups with multi-entity groups')
+        single_member_groups: list[StorySageEntityGroup] = [group for group in entities_collection if len(group) == 1]
+        multi_member_groups: list[StorySageEntityGroup] = [group for group in entities_collection if len(group) > 1]
+        multi_member_group_words = [word for group in multi_member_groups for entity in group for word in entity.entity_name.split()]
+
+        merged_single_entities = 0
+        single_entities_to_merge = 0
+        unmerged_single_entities = 0
+        for single_group in tqdm(single_member_groups, desc='Merging single-entity groups'):
+            single_entity = single_group.entities[0]  # Get the only entity in the group
+            if single_entity.entity_name not in multi_member_group_words:
+                unmerged_single_entities += 1
+                entities_collection.remove_entity_group(single_group.entity_group_id)
+                continue
+            else:
+                single_entities_to_merge += 1
+                
+            # Look for matches in other groups
+            merge_found = False
+            for other_group in multi_member_groups:
+                # Check if single entity matches any word in any entity in other group
+                for other_entity in other_group:
+                    other_entity_words = other_entity.entity_name.split()
+                    if single_entity.entity_name in other_entity_words:
+                        # Merge the two groups
+                        other_group: StorySageEntityGroup = StorySageEntityCollection.merge_groups(other_group, single_group)
+                        merge_found = True
+                        merged_single_entities += 1
+                        break
+                if merge_found:
+                    break
+                # Remove the old single group
+                if single_group in entities_collection:
+                    entities_collection.remove_entity_group(single_group.entity_group_id)
+        if verbose:
+            print(f'Found {single_entities_to_merge} entities to merge')
+            print(f'Merged {merged_single_entities} single-entity groups')
+            print(f'Removed {unmerged_single_entities} unmergable single-entity groups')
+
+        return entities_collection
+    
+    def _get_multipass_cluster(self, vectors: spmatrix, strings: list[str], eps_first: float=0.5,
+                               eps_second: float=0.1, min_samples: int = 2, 
+                               merge_single_entities: bool = True, verbose: bool = False) -> StorySageEntityCollection:
+        
+        collected_entities, noise_cluster = self._get_dbscan_clusters(vectors=vectors, strings=strings, eps=eps_first, min_samples=min_samples)
+        if len(collected_entities) < 1:
+            raise AttributeError(f'No entities were grouped for eps_first {eps_first}, min_samples {min_samples}')
+        max_group_size = max(len(group) for group in collected_entities)
+
+        if verbose:
+            print(f"Total entities: {len(strings)}")
+            print(f"Number of groups (first clustering): {len(collected_entities)}")
+            print(f"Largest group size (first clustering): {max_group_size} ({max_group_size / len(strings):.2%})")
+            print(f"Noise cluster size: {len(noise_cluster)}")
+
+        # Recluster noise_cluster
+        if noise_cluster and len(noise_cluster) > 1:
+            for entity in noise_cluster:
+                if type(entity) == str:
+                    print(f'String entity: {entity}')
+            entity_strings = [entity.entity_name for entity in noise_cluster]
+            vectors_sub = self.vectorizer.fit_transform(entity_strings)
+            sub_clusters, _ = self._get_dbscan_clusters(vectors=vectors_sub, strings=entity_strings, eps=eps_second, min_samples=1)
+            for sub_cluster in sub_clusters:
+                collected_entities.add_entity_group(sub_cluster)
+            if verbose:
+                print('---------------------------------')
+                print(f"Reclustered noise cluster with eps {eps_second}: {len(sub_clusters)}")
+                print(f'Multi-entity groups created: {sum([1 for group in sub_clusters if len(group) > 1])}')
+                print(f'Single-entity groups created: {sum([1 for group in sub_clusters if len(group) == 1])}')
+
+        if merge_single_entities:
+            collected_entities = self._merge_single_entities(collected_entities)
+            
+            # Compress multi-member groups by removing multi-word entities that contain single-word entities
+            multi_member_groups: list[StorySageEntityGroup] = []
+            for group in collected_entities:
+                if len(group) > 1:
+                    multi_member_groups.append(group)
+            #multi_member_groups: list[StorySageEntityGroup] = [group for group in collected_entities if len(group) > 1]
+            for group in multi_member_groups:
+                # Get single word entities in this group
+                single_word_entities: list[StorySageEntity] = [entity for entity in group if len(entity.entity_name.split()) == 1]
+                
+                # For each single word entity
+                for single_entity in single_word_entities:
+                    # Get all multi-word entities in same group that contain this word
+                    to_remove = [entity for entity in group 
+                                if len(entity.entity_name.split()) > 1 
+                                and single_entity.entity_name in entity.entity_name.split()]
+                    
+                    # Remove matching entities from group
+                    for entity in to_remove:
+                        group.remove_entity_by_id(entity.entity_id)
+
+        else:
+            print('---------------------------------')
+
+        # Analyze statistics about collected entities
+        total_groups = len(collected_entities)
+        group_sizes = [len(group) for group in collected_entities]
+        avg_group_size = sum(group_sizes) / len(group_sizes)
+        median_group_size = np.median(group_sizes)
+        max_group_size = max(group_sizes)
+        min_group_size = min(group_sizes)
+        single_entity_groups = sum(1 for size in group_sizes if size == 1)
+        max_group = max(collected_entities, key=lambda x: len(x))
+        if verbose:
+            print(f"Total remaining groups: {total_groups}")
+            print(f"Average group size: {avg_group_size:.2f}")
+            print(f"Median group size: {median_group_size}")
+            print(f"Largest group size: {max_group_size}")
+            print(f"Smallest group size: {min_group_size}")
+            print(f"Number of single-entity groups: {single_entity_groups} ({single_entity_groups / total_groups:.2%})")
+            print(f"Number of multi-entity groups: {total_groups - single_entity_groups} ({(total_groups - single_entity_groups) / total_groups:.2%})")
+            print('---------------------------------')
+            # print the largest group
+            print(f"Largest group size: {max_group_size}")
+            for entity in sorted(max_group, key=lambda x: x.entity_name):
+                print('    ', entity.entity_name)
+
+            print('---------------------------------')
+            print('Removing single-entity groups')
+        
+        # Remove single-entity groups
+        for group in [group for group in collected_entities if len(group) == 1]:
+            collected_entities.remove_entity_group(group.entity_group_id)
+
+        return collected_entities
+
+    def _group_entity_strings(self, entity_strings_list: list[str]) -> StorySageEntityCollection:
+        
+        self.vectorizer = TfidfVectorizer()
+        vectors = self.vectorizer.fit_transform(entity_strings_list)
+
+        return self._get_multipass_cluster(vectors=vectors, strings=entity_strings_list, 
+                                           eps_first=0.8, eps_second=0.5,
+                                           min_samples=4)
+
+    def get_grouped_entities(self, documents: list[Document], labels: list[str] = ['PERSON']) -> StorySageEntityCollection:
         """Extracts and groups named entities from documents.
 
         This method combines entity extraction and grouping:
@@ -277,30 +482,21 @@ class StorySageEntityExtractor():
 
         entities_dict = self._extract_entities(documents, labels)
         entity_strings = set()
-        for entities in entities_dict.values():
+        for entity_type, entities in entities_dict.items():
+            if entity_type != 'PERSON':
+                continue
             for entity in entities:
                 cleaned = self._clean_string(entity)
                 if cleaned:
                     entity_strings.add(cleaned)
 
-        # Initialize vectorizer with existing entities if available
-        existing_strings = set()
-        if self.entity_collection:
-            for group in self.entity_collection.entity_groups:
-                for entity in group.entities:
-                    existing_strings.add(entity.entity_name)
+        entity_strings_list = list(entity_strings)
+
+        with open(f'all_strings_{self.target_series_info.series_metadata_name}.json', 'w') as f:
+            json.dump(entity_strings_list, f)
+
+        self.entity_collection = self._group_entity_strings(entity_strings_list=entity_strings_list)
         
-        # Fit vectorizer on combined strings
-        all_strings = entity_strings.union(existing_strings)
-        self.vectorizer = TfidfVectorizer()
-        self.vectorizer.fit(all_strings)
-
-        # If we have existing entities, transform their vectors with new vectorizer
-        self.entities = []  # Reset to rebuild with new vectors
-        for string in tqdm(all_strings, desc='Grouping entities'):
-            self._add_new_string_to_groups(string)
-
-        self.entity_collection = StorySageEntityCollection.from_sets(self.entities)
         return self.entity_collection
 
     def regroup_entities(self, new_threshold: float = 0.7) -> List[GroupType]:
