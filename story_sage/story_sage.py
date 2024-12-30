@@ -2,12 +2,18 @@ import logging
 import yaml
 import uuid
 from typing import Tuple, Optional, Dict, List
-from .story_sage_state import StorySageState
-from .story_sage_retriever import StorySageRetriever
+from .data_classes.story_sage_state import StorySageState
+from .vector_store import StorySageRetriever
 from .story_sage_chain import StorySageChain
+from .story_sage_entity import StorySageEntityCollection
+from .data_classes.story_sage_series import StorySageSeries
 
 class ConditionalRequestIDFormatter(logging.Formatter):
-    """Custom formatter to include request_id only if it's not None."""
+    """Custom formatter to include request_id only if it's not None.
+    
+    Extends the built-in logging.Formatter to conditionally append a
+    request_id to the log message if present.
+    """
     
     def format(self, record):
         if hasattr(record, 'request_id') and record.request_id:
@@ -16,60 +22,84 @@ class ConditionalRequestIDFormatter(logging.Formatter):
         return super().format(record)
 
 class StorySage:
-    """
-    Main class for the Story Sage system that helps readers track story elements.
-    Coordinates between the retriever, chain, and state management components.
+    """Main class for the Story Sage system.
+
+    Coordinates between the retriever, chain, and state management components
+    to help readers track story elements.
+
+    Example usage:
+        story_sage = StorySage(
+            api_key="YOUR_API_KEY",
+            chroma_path="path/to/chroma",
+            chroma_collection_name="collection_name",
+            entities_dict={"meta": StorySageEntityCollection(...)},
+            series_list=[{"title": "Series Title"}],
+            n_chunks=5
+        )
+        answer, context, request_id = story_sage.invoke(
+            question="Who is the main character?",
+            book_number=1,
+            chapter_number=1,
+            series_id=1
+        )
+
+        Example result:
+            answer: "The main character is Rand al'Thor."
+            context: ["Rand al'Thor is introduced in the first chapter..."]
+            request_id: "123e4567-e89b-12d3-a456-426614174000"
     """
 
     def __init__(self, api_key: str, chroma_path: str, chroma_collection_name: str, 
-                 entities: dict, series_yml_path: str, n_chunks: int = 5):
-        """Initialize the StorySage instance with necessary components and configuration."""
+                 entities_dict: dict[str, StorySageEntityCollection],
+                 series_list: List[dict] = [], n_chunks: int = 5):
+        """Initializes the StorySage instance.
+
+        Args:
+            api_key (str): API key for accessing external services.
+            chroma_path (str): Path to the Chroma database.
+            chroma_collection_name (str): Name of the Chroma collection.
+            entities_dict (dict[str, StorySageEntityCollection]): Mapping of series metadata to entity collections.
+            series_list (List[dict], optional): A list of dictionaries representing series info. Defaults to [].
+            n_chunks (int, optional): Number of chunks for the retriever to process. Defaults to 5.
+        """
         # Set up logging
         self._logger = logging.getLogger(__name__)
         self._logger.setLevel(logging.DEBUG)
         self._logger.propagate = True  # Allow logs to root logger
-
-        # Create handler for logger
         handler = logging.StreamHandler()
         handler.setLevel(logging.DEBUG)
-
-        # Define the custom formatter
         formatter = ConditionalRequestIDFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
-
-        # Add the handler to the logger
         self._logger.addHandler(handler)
 
         # Initialize request_id
         self.request_id = None
 
+        self.entities = {key: StorySageEntityCollection.from_dict(value) for key, value in entities_dict.items()}
+
+        # Initialize series info
+        self.series_list = [StorySageSeries.from_dict(series) for series in series_list]
+
         # Create a LoggerAdapter to include class attributes
         self.logger = logging.LoggerAdapter(self._logger, {'request_id': self.request_id})
 
-        self.retriever = StorySageRetriever(chroma_path, chroma_collection_name, entities, n_chunks)
-        self.chain = StorySageChain(api_key, entities, self.retriever, self.logger)
+        # Initialize retriever and chain components
+        self.retriever = StorySageRetriever(chroma_path, chroma_collection_name, n_chunks)
+        self.chain = StorySageChain(api_key, self.entities, self.series_list, self.retriever, self.logger)
         
-        # Load series configuration
-        try:
-            with open(series_yml_path, 'r') as file:
-                self.series_dict = yaml.safe_load(file)
-        except Exception as e:
-            self.logger.error(f"Failed to load series configuration: {e}")
-            raise
 
     def invoke(self, question: str, book_number: int = None, 
                chapter_number: int = None, series_id: int = None) -> Tuple[str, List[str]]:
-        """
-        Process a user's question about the story with optional context parameters.
+        """Invokes the question-processing logic through the chain.
 
         Args:
-            question: The user's question about the story
-            book_number: Optional book number for context filtering
-            chapter_number: Optional chapter number for context filtering
-            series_id: Optional series ID for context filtering
+            question (str): The user's question about the story.
+            book_number (int, optional): Optional book number for context filtering. Defaults to None.
+            chapter_number (int, optional): Optional chapter number for context filtering. Defaults to None.
+            series_id (int, optional): Optional series ID for context filtering. Defaults to None.
 
         Returns:
-            Tuple containing (answer, context_list)
+            Tuple[str, List[str]]: A tuple containing the answer, context list, and generated request ID.
         """
         self.logger.info(f"Processing question: {question}")
         
@@ -102,4 +132,16 @@ class StorySage:
             
         except Exception as e:
             self.logger.error(f"Error processing question: {e}")
-            raise
+            raise e
+
+# Example usage:
+# Initialize StorySage with required parameters
+# story_sage = StorySage(api_key="your_api_key", chroma_path="path/to/chroma", chroma_collection_name="collection_name")
+
+# Invoke the system with a question
+# answer, context, request_id = story_sage.invoke(question="Who is the main character?", book_number=1, chapter_number=1, series_id=1)
+
+# Example result:
+# answer: "The main character is Rand al'Thor."
+# context: ["Rand al'Thor is introduced in the first chapter of the first book."]
+# request_id: "123e4567-e89b-12d3-a456-426614174000"
