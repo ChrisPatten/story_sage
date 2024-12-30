@@ -1,3 +1,32 @@
+"""
+chunking.py
+
+Provides a text chunking utility for semantically splitting long documents using
+sentence embeddings and cosine similarity. The resulting chunks can be stored in
+JSON files for further processing and retrieval.
+
+Example usage:
+    $ python chunking.py
+
+After running:
+    1. The script reads all text files in a series directory (e.g., './books/harry_potter/*.txt').
+    2. Each chapter from each book is processed into coherent chunks.
+    3. Generated chunks are saved as JSON in './chunks/<series_name>/semantic_chunks/'.
+
+Example results:
+    The script creates JSON files for each chapter with a list of text chunks. 
+    For instance:
+    [
+        "First chunk of text...",
+        "Second chunk of text...",
+        ...
+    ]
+
+Note:
+    - Requires nltk, sentence-transformers, scikit-learn, and numpy packages.
+    - Chunks are written to disk for potential embedding or indexing elsewhere.
+"""
+
 import os
 import json
 from story_sage.utils.chunker import StorySageChunker
@@ -27,6 +56,11 @@ Requirements:
 # Removed the standalone read_text_file function
 
 if __name__ == '__main__':
+    """Main entry point for the chunking utility.
+
+    Iterates through all books and chapters for the specified series, uses the
+    StorySageChunker to create coherent text chunks, and saves them as JSON.
+    """
     chunker = StorySageChunker(model_name='all-MiniLM-L6-v2')
     text_dict = chunker.read_text_files(file_path)
     

@@ -13,19 +13,65 @@ from typing import Optional, List
 
 
 class StorySageChain(StateGraph):
-    """Defines the chain of operations for the Story Sage system."""
+    """Defines a chain of operations for the Story Sage system.
+
+    This class manages a workflow that extracts characters, retrieves context,
+    and generates user-facing answers based on retrieved text. The workflow is
+    represented by a compiled StateGraph.
+
+    Attributes:
+        entities (dict[str, StorySageEntityCollection]): A mapping of series metadata names to entity collections.
+        series_list (List[StorySageSeries]): A list of series information.
+        retriever (StorySageRetriever): Used to fetch relevant document context chunks.
+        stepback (StorySageStepback): Provides query optimization functionality.
+        llm (ChatOpenAI): Language model interface.
+        prompt (PromptTemplate): Defines the text prompt structure for responses.
+        logger (logging.Logger): Logger for debug and info messages.
+
+    Example:
+        >>> # Initialize the chain with necessary components
+        >>> chain_instance = StorySageChain(
+        ...     api_key="YOUR_API_KEY",
+        ...     entities={"my_series": StorySageEntityCollection([])},
+        ...     series_list=[StorySageSeries(series_id=1, series_name="My Series", series_metadata_name="my_series")],
+        ...     retriever=StorySageRetriever("path/to/db", "collection", 5),
+        ...     logger=logging.getLogger("story_sage_chain")
+        ... )
+        >>> # Invoke some state-handling methods via:
+        >>> # chain_instance.graph.invoke(StorySageState(...))
+
+    Example Results:
+        The chain will generate structured results with an answer and context 
+        details based on the user's question and the available series data.
+    """
 
     def __init__(self, api_key: str, entities: dict[str, StorySageEntityCollection], 
                  series_list: List[StorySageSeries], retriever: StorySageRetriever, 
                  logger: Optional[logging.Logger] = None):
-        """
-        Initialize the StorySageChain instance.
+        """Initializes a StorySageChain instance.
 
         Args:
             api_key (str): The API key for the language model.
-            entities (dict[str, StorySageEntityCollection]): Dictionary containing character information.
-            retriever (StorySageRetriever): The retriever instance for fetching context.
-            logger (Optional[logging.Logger]): Logger instance for logging.
+            entities (dict[str, StorySageEntityCollection]): A dictionary of entity collections keyed by series metadata name.
+            series_list (List[StorySageSeries]): A list containing information about different series.
+            retriever (StorySageRetriever): The retriever used to query relevant text chunks.
+            logger (Optional[logging.Logger]): An optional logger instance for debug and info logs.
+
+        Returns:
+            StorySageChain: An initialized StorySageChain object with a compiled processing graph.
+
+        Example:
+            >>> chain_instance = StorySageChain(
+            ...     api_key="YOUR_API_KEY",
+            ...     entities={"series_key": StorySageEntityCollection([])},
+            ...     series_list=[StorySageSeries(...)] ,
+            ...     retriever=StorySageRetriever(...),
+            ...     logger=logging.getLogger(__name__)
+            ... )
+
+        Example Results:
+            The returned StorySageChain object includes a compiled StateGraph
+            that can be used to process user questions and retrieve contextual answers.
         """
 
         # Validate that entities is a dictionary with keys of type str and values of type StorySageEntityCollection
@@ -86,14 +132,23 @@ class StorySageChain(StateGraph):
         self.graph = graph_builder.compile()
   
     def get_characters(self, state: StorySageState) -> dict:
-        """
-        Extract entities mentioned in the user's question, filtered by series.
+        """Identifies entities mentioned in the user's question, filtered by series.
 
         Args:
-            state (StorySageState): The current state of the system.
+            state (StorySageState): The current state of the system, including user query details and context parameters.
 
         Returns:
-            dict: A dictionary with lists of entities found in the question.
+            dict: A dictionary containing a list of unique entity group IDs found in the question text.
+
+        Example:
+            >>> state = StorySageState(question="What does Rand do?", series_id=1)
+            >>> result = chain_instance.get_characters(state)
+            >>> print(result)
+            {'entities': ['<group_id_1>', '<group_id_2>']}
+
+        Example Results:
+            If certain entity names appear in the user's question, they will be
+            mapped to their respective entity_group_id values.
         """
         self.logger.debug("Extracting characters from question.")
         # Initialize sets to collect entities
@@ -119,14 +174,26 @@ class StorySageChain(StateGraph):
         }
   
     def get_context(self, state: StorySageState) -> dict:
-        """
-        Retrieve relevant context based on the user's question and extracted entities.
+        """Retrieves relevant contextual excerpts for the user's question.
+
+        This method queries the underlying document store based on the question
+        and filtered entities/book/chapter details, then provides the matched text.
 
         Args:
-            state (StorySageState): The current state of the system.
+            state (StorySageState): The current state containing question text and optional filters.
 
         Returns:
-            dict: A dictionary containing the retrieved context.
+            dict: A dictionary containing a 'context' key with a list of relevant text excerpts.
+
+        Example:
+            >>> state = StorySageState(question="Where does John meet Sarah?", book_number=2, chapter_number=5)
+            >>> context_data = chain_instance.get_context(state)
+            >>> print(context_data['context'])
+            ['Book 2, Chapter 5: John travels to the docks...', ...]
+
+        Example Results:
+            Returns selected text chunks that match the provided filters and can
+            be used to generate a final answer.
         """
         self.logger.debug("Retrieving context based on the question and entities.")
         # Set up filters for context retrieval
@@ -160,14 +227,27 @@ class StorySageChain(StateGraph):
         return {'context': context}
   
     def generate(self, state: StorySageState) -> dict:
-        """
-        Generate an answer using the language model based on the question and context.
+        """Generates the final answer using the language model.
+
+        This method assembles the user's question and retrieved context into
+        a prompt and then invokes the language model to produce a concise answer.
 
         Args:
-            state (StorySageState): The current state of the system.
+            state (StorySageState): The current state containing the user's question and context.
 
         Returns:
-            dict: A dictionary containing the generated answer.
+            dict: A dictionary containing the generated 'answer' field.
+
+        Example:
+            >>> state = StorySageState(question="Who is the main character?",
+            ...                        context=["Book 1, Chapter 1: The introduction of Rand al'Thor..."])
+            >>> result = chain_instance.generate(state)
+            >>> print(result['answer'])
+            "The main character appears to be Rand al'Thor..."
+
+        Example Results:
+            The final answer is typically a human-readable text that references
+            the relevant context while adhering to the guidelines (no outside info).
         """
         # Combine context excerpts into a single string
         docs_content = '\n\n'.join(state['context'])

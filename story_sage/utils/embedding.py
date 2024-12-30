@@ -1,40 +1,25 @@
 """
 Embedding Utility
 
-This module provides functionality to generate embeddings for text documents using SentenceTransformer.
-It creates vector representations of text chunks for similarity comparisons and stores them in a ChromaDB vector store.
+Provides functionality to generate embeddings for text documents using SentenceTransformer,
+then store those embeddings in a ChromaDB vector store for similarity searches.
 
 Features:
-    - Load and process text chunks from disk.
-    - Generate embeddings using a specified SentenceTransformer model.
-    - Embed documents and add them to a vector store with associated metadata.
-    - Utilize embeddings for similarity comparisons in applications like information retrieval.
-
-Requirements:
-    - sentence-transformers
-    - torch
-    - chromadb
-    - tqdm
-    - pyyaml
-
-Example Usage:
-
-    To run this script, execute the following command in the terminal:
-
-        $ python embedding.py
-
-    Ensure that the required files (`series.yml`, `entities.json`, `config.yml`) are present in the working directory,
-    and that the necessary dependencies are installed.
-
-Example Results:
-
-    - The script will output progress bars indicating the processing of chunks and embedding of documents.
-    - After running, the ChromaDB vector store will contain embeddings for all processed documents, accessible for similarity search.
+    • Load and process text chunks from disk.
+    • Generate embeddings using SentenceTransformer.
+    • Embed documents and add them to a vector store with metadata.
+    • Utilize embeddings for similarity comparisons in retrieval applications.
 
 Note:
+    • ChromaDB vector store is created at the specified path (default: ./chroma_data).
+    • 'chunks' directory should contain relevant `.pkl` or `.json` text chunk files.
 
-    - The ChromaDB vector store will be created at the specified path (`./chroma_data`).
-    - Ensure that the 'chunks' directory contains the appropriate pickle files with text chunks.
+Example Usage:
+    $ python embedding.py
+
+Example Results:
+    • Displays progress bars for chunk processing and embedding.
+    • After completion, all chunk embeddings are stored in the specified vector store.
 """
 
 import pickle
@@ -55,19 +40,22 @@ import argparse
 from story_sage.story_sage_entity import StorySageEntityCollection
 
 def load_chunk_from_disk(file_path: str) -> List[Document]:
-    """
-    Load text chunks from a pickle or JSON file and create a list of Document objects.
+    """Loads text chunks from disk and creates Document objects.
+
+    This function detects whether the file is a pickle (.pkl) or JSON (.json),
+    loads the contents, and converts each text chunk into a Document object
+    including its book and chapter metadata.
 
     Args:
         file_path (str): Path to the pickle or JSON file containing text chunks.
 
     Returns:
-        List[Document]: A list of Document objects with page content and metadata.
+        List[Document]: A list of Document objects with assigned metadata.
 
     Example:
         >>> docs = load_chunk_from_disk('1_1.pkl')
         >>> print(len(docs))
-        10  # Assuming the pickle file contains 10 chunks
+        10  # Number of chunks loaded
     """
     doc_collection = []
     # Extract book and chapter numbers from the filename
@@ -108,25 +96,23 @@ def load_chunk_from_disk(file_path: str) -> List[Document]:
     return doc_collection
 
 class Embedder(EmbeddingFunction):
-    """
-    Embedder class using SentenceTransformer to generate embeddings.
-
-    This class wraps a SentenceTransformer model to generate embeddings compatible with ChromaDB.
+    """Wraps a SentenceTransformer model to generate embeddings for input documents.
 
     Attributes:
-        model (SentenceTransformer): The loaded transformer model used for encoding texts.
+        model (SentenceTransformer): The transformer model used for creating embeddings.
+
+    Example usage:
+        >>> embedder = Embedder(model_name='all-MiniLM-L6-v2')
+        >>> embeddings = embedder(['Hello world', 'Another doc'])
+        >>> print(len(embeddings))
+        2
     """
 
     def __init__(self, model_name: str = 'all-MiniLM-L6-v2'):
-        """
-        Initialize the Embedder with a specified SentenceTransformer model.
+        """Initializes an Embedder with a specific SentenceTransformer model.
 
         Args:
-            model_name (str, optional): Name of the SentenceTransformer model to use.
-                Defaults to 'all-MiniLM-L6-v2'.
-
-        Example:
-            >>> embedder = Embedder(model_name='distilbert-base-nli-stsb-mean-tokens')
+            model_name (str, optional): SentenceTransformer model name. Defaults to 'all-MiniLM-L6-v2'.
         """
         # Select device: use MPS if available, else CPU
         device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
@@ -134,37 +120,35 @@ class Embedder(EmbeddingFunction):
         self.model = self.model.to(device)
 
     def __call__(self, input: Documents) -> Embeddings:
-        """
-        Generate embeddings for the input documents.
+        """Generates embeddings for a list of text documents.
 
         Args:
-            input (Documents): List of document strings to generate embeddings for.
+            input (Documents): A list of text documents (strings).
 
         Returns:
-            Embeddings: List of embeddings corresponding to the input documents.
+            Embeddings: A list of embedding vectors for each document.
 
         Example:
-            >>> embeddings = embedder(['Hello world', 'How are you?'])
-            >>> print(len(embeddings))
-            2
+            >>> embeddings = embedder(["Hello world", "How are you?"])
+            >>> print(len(embeddings), len(embeddings[0]))
+            2 384
         """
         return self.model.encode(input).tolist()
 
     def embed_documents(self, documents: Documents) -> Embeddings:
-        """
-        Generate embeddings for a list of documents with progress indication.
+        """Produces embeddings for a list of documents with progress indication.
 
         Args:
-            documents (Documents): List of document strings to generate embeddings for.
+            documents (Documents): A list of text documents.
 
         Returns:
-            Embeddings: List of embeddings corresponding to the input documents.
+            Embeddings: A list of embedding vectors, each representing a document.
 
         Example:
-            >>> documents = ['Document one.', 'Document two.', 'Document three.']
+            >>> documents = ["Document one.", "Document two."]
             >>> embeddings = embedder.embed_documents(documents)
             >>> print(len(embeddings))
-            3
+            2
         """
         embedded_documents = []
         # Embed documents with a progress bar
@@ -176,14 +160,21 @@ class Embedder(EmbeddingFunction):
 def embed_documents(doc_collection: List[Document],
                     vector_store: Collection, series_id: int, 
                     entity_collection: StorySageEntityCollection) -> None:
-    """
-    Embed documents and add them to the vector store with metadata.
+    """Embeds a collection of Document objects and inserts them into the vector store.
+
+    Assigns metadata (book number, chapter number, series ID) to each document, then
+    processes entity tags if found within the text, marking the document accordingly
+    before inserting into the vector store.
 
     Args:
-        doc_collection (List[Document]): List of Document objects to be embedded.
-        series_info (dict): Dictionary containing series information.
-        vector_store (Collection): ChromaDB collection to store the embeddings.
-        series_id (int): Identifier for the series.
+        doc_collection (List[Document]): The documents to embed and store.
+        vector_store (Collection): The vector store (ChromaDB collection) for insertion.
+        series_id (int): Numeric ID to track the series.
+        entity_collection (StorySageEntityCollection): Provides named entities for tagging.
+
+    Example:
+        >>> docs = [Document(page_content="Sample text.", metadata={"book_number":1, "chapter_number":1})]
+        >>> embed_documents(docs, vector_store, 1, some_entity_collection)
     """
     ids = []
     documents_to_encode = []
@@ -222,13 +213,20 @@ def embed_documents(doc_collection: List[Document],
         )
 
 def update_tagged_entities(vector_store: Collection, entity_collection: StorySageEntityCollection, series_id: int, book_number: int = None) -> None:
-    """
-    Update tagged entities in the vector store with metadata.
+    """Updates metadata for documents in the vector store by tagging relevant entities.
+
+    Checks documents in the store that match the provided series ID (and optionally book number),
+    identifies which entities are present in each document, and updates the corresponding metadata.
 
     Args:
-        vector_store (Collection): ChromaDB collection containing the embeddings.
-        entity_collection (StorySageEntityCollection): Collection of tagged entities.
-        series_id (int): Identifier for the series.
+        vector_store (Collection): The ChromaDB collection holding existing documents.
+        entity_collection (StorySageEntityCollection): Contains entity data for tagging.
+        series_id (int): Numeric ID for the series to match.
+        book_number (int, optional): Restrict updates to a specific book. Defaults to None.
+
+    Example:
+        >>> update_tagged_entities(vector_store, entity_collection, series_id=1, book_number=1)
+        # Updates tags for all documents from book 1 of series 1.
     """
     entities_by_name = entity_collection.get_group_ids_by_name()
     allowed_characters_pattern = r'[^a-z\s-]'
@@ -263,33 +261,20 @@ def update_tagged_entities(vector_store: Collection, entity_collection: StorySag
     )
 
 if __name__ == '__main__':
-    """
-    Main Execution
+    """Main execution flow for embedding utility.
 
-    This main block demonstrates how to initialize the Embedder, load documents,
-    generate embeddings, and store them in a ChromaDB vector store.
+    1. Loads settings from YAML/JSON files.
+    2. Initializes the ChromaDB client and Embedder.
+    3. Retrieves or creates the vector store collection.
+    4. Processes each series directory's text chunks.
+    5. Embeds them and updates entity tags in the vector store.
 
-    Steps:
-        - Initialize the ChromaDB client and Embedder.
-        - Optionally delete existing collection.
-        - Get or create the vector store collection.
-        - Process each series specified.
-        - For each series, process and embed documents from chunks.
-
-    Example Usage:
-
+    Example:
         $ python embedding.py
 
-    Example Results:
-
-        - The script will output progress bars indicating the processing of chunks and embedding of documents.
-        - After running, the vector store will contain embeddings for all processed documents, accessible for similarity search.
-
-    Note:
-
-        - Ensure that the 'series.yml', 'entities.json', and 'config.yml' files exist in the working directory.
-        - The 'chunks' directory should contain the appropriate pickle files with text chunks.
-        - The ChromaDB vector store will be created at the specified path ('./chroma_data').
+    Example result:
+        • Creates/Populates a ChromaDB store with embeddings from loaded Documents.
+        • Prints progress bars during chunk loading and embedding.
     """
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description='Embedding Utility Script')

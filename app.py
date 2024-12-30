@@ -1,46 +1,31 @@
 """
 app.py
 
-This module sets up a Flask web application for the StorySage project.
+Provides the Flask application for the StorySage project, including RESTful endpoints
+for user queries and feedback, as well as a web interface.
 
-It provides RESTful API endpoints for invoking the StorySage engine,
-handling user feedback, and serving the main web interface.
-
-Example Usage:
-    To run the application, execute the following command:
+Example usage:
     $ python app.py
 
-    Access the web interface by navigating to:
-    http://localhost:5010/
+After running:
+    1. Visit http://localhost:5010/ in your browser to view the web interface.
+    2. Send POST requests to /invoke to query the StorySage engine.
 
-    Example API call to invoke the StorySage engine:
-    ```bash
-    curl -X POST http://localhost:5010/invoke -H "Content-Type: application/json" -d '{
-        "question": "What is the significance of the Mirror of Erised?",
-        "book_number": 1,
-        "chapter_number": 12,
-        "series_id": 2
-    }'
-    ```
-
-Example Results:
-    - The application renders the main page at '/'.
-    - The '/invoke' endpoint processes user questions and returns answers.
-    - The '/feedback' endpoint accepts user feedback on the responses.
+Example results:
+    - Renders the index page at '/'.
+    - The '/invoke' endpoint returns JSON with an answer, context, and request_id.
+    - The '/feedback' endpoint accepts and logs user feedback.
 
 Note:
-    - Ensure 'config.yml', 'series.yml', and 'entities.json' are properly configured.
-    - Dependencies must be installed, including Flask and related packages.
+    - Check config.yml, series.yml, and entities.json for correct setup.
+    - Install all dependencies (Flask, etc.) before running.
 """
 
 from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS, cross_origin
 from story_sage.story_sage import StorySage
 import yaml
-import pickle
-import glob
 import os
-import re
 import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
@@ -127,45 +112,34 @@ story_sage = StorySage(
 
 @app.route('/')
 def index():
-    """
-    Render the main index page.
+    """Renders the main index page.
 
     Returns:
-        A rendered HTML template for the index page.
+        Response: An HTML page rendered from the index template.
     """
     return render_template('./index.html')
 
 @app.route('/invoke', methods=['POST'])
 @cross_origin()
 def invoke_story_sage():
-    """
-    Handle POST requests to invoke the StorySage engine.
+    """Handles POST requests to invoke the StorySage engine.
 
-    Expected JSON payload:
-        {
-            "question": str,
-            "book_number": int,
-            "chapter_number": int,
-            "series_id": int
-        }
+    Expects a JSON payload with:
+        question (str): The question to ask.
+        book_number (int): The book number for context.
+        chapter_number (int): The chapter number for context.
+        series_id (int): The series ID for context.
 
     Returns:
-        A JSON response containing the result, context, and request_id.
+        Response: JSON containing the result, context, and request_id.
 
-    Example Request:
+    Example:
         curl -X POST http://localhost:5010/invoke -H "Content-Type: application/json" -d '{
             "question": "Who is the Half-Blood Prince?",
             "book_number": 6,
             "chapter_number": 14,
             "series_id": 2
         }'
-
-    Example Response:
-        {
-            "result": "The Half-Blood Prince is revealed to be Severus Snape.",
-            "context": "...",
-            "request_id": "unique_request_id"
-        }
     """
     data = request.get_json()
     required_keys = ['question', 'book_number', 'chapter_number', 'series_id']
@@ -185,24 +159,20 @@ def invoke_story_sage():
 @app.route('/invoke', methods=['GET'])
 @cross_origin()
 def get_series():
-    """
-    Handle GET requests to retrieve available series information.
+    """Handles GET requests to retrieve available series information.
 
     Returns:
-        A JSON response containing the list of series.
+        Response: JSON list of series with their metadata.
 
-    Example Request:
+    Example:
         curl http://localhost:5010/invoke
-
-    Example Response:
         [
-            {
-                "series_id": 1,
-                "series_name": "The Lord of the Rings",
-                "series_metadata_name": "lord_of_the_rings",
-                ...
-            },
-            ...
+           {
+               "series_id": 1,
+               "series_name": "Title",
+               ...
+           },
+           ...
         ]
     """
     return jsonify(series_list)
@@ -210,28 +180,22 @@ def get_series():
 @app.route('/feedback', methods=['POST'])
 @cross_origin()
 def feedback():
-    """
-    Handle POST requests to submit user feedback.
+    """Handles user feedback submission via POST requests.
 
-    Expected JSON payload:
-        {
-            "request_id": str,
-            "feedback": str
-        }
+    Expects a JSON payload with:
+        request_id (str): The request identifier.
+        feedback (str): The user's comments or evaluation.
+        type (str): The category or type of feedback.
 
     Returns:
-        A JSON response confirming receipt of the feedback.
+        Response: A JSON success message or an error response.
 
-    Example Request:
+    Example:
         curl -X POST http://localhost:5010/feedback -H "Content-Type: application/json" -d '{
-            "request_id": "unique_request_id",
-            "feedback": "The answer was very helpful!"
+            "request_id": "123e4567-e89b-12d3-a456-426614174000",
+            "feedback": "Great answer!",
+            "type": "praise"
         }'
-
-    Example Response:
-        {
-            "message": "Feedback received."
-        }
     """
     data = request.get_json()
     required_keys = ['request_id', 'feedback', 'type']

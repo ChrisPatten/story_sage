@@ -31,15 +31,25 @@ class StorySageEntityExtractor():
 
     This class uses the GLiNER model to extract named entities and groups them
     based on TF-IDF vector similarity. It provides methods for cleaning entity
-    strings, extracting entities from text, and grouping similar entities together.
+    strings, extracting entities from text, and compiling them into groups.
 
     Attributes:
-        model (GLiNER): The loaded GLiNER model instance
-        target_series_info (StorySageSeries): Information about the target series
-        entities (List[GroupType]): List of entity groups with their vectors
-        entity_collection (StorySageEntityCollection): Collection of grouped entities
-        similarity_threshold (float): Threshold for grouping similar entities
-        chunk_max_length (int): Maximum text length to process at once
+        model (GLiNER): The loaded GLiNER model instance.
+        target_series_info (StorySageSeries): Information about the target series.
+        entities (List[GroupType]): List of entity groups with their vectors.
+        entity_collection (StorySageEntityCollection): Collection of grouped entities.
+        similarity_threshold (float): Threshold for grouping similar entities.
+        chunk_max_length (int): Maximum text length to process at once.
+
+    Example usage:
+        >>> series_data = {...}
+        >>> extractor = StorySageEntityExtractor(series_data, model_name='urchade/gliner_base', device='cpu')
+        >>> docs = [Document(page_content="John and Johnny discussed plans.")]
+        >>> grouped_entities = extractor.get_grouped_entities(docs, labels=['PERSON'])
+        >>> print(len(grouped_entities))
+
+    Example result:
+        1  # Because "John" and "Johnny" might be grouped together
     """
 
     def __init__(self, series: Dict,
@@ -99,12 +109,7 @@ class StorySageEntityExtractor():
                       person_titles: list[str] = [],
                       min_len: int = 3,
                       max_len: int = 30) -> str:
-        """
-        Cleans a given string by removing specified titles, unwanted characters, and skipping certain names.
-
-        This function processes a given text string by removing titles, unwanted characters, and skipping
-        names that are either too short, too long, or included in a list of names to skip. It also ensures
-        that the cleaned text does not start with 'of ' and is not in the list of person titles.
+        """Cleans a given string by removing specified titles, unwanted characters, and skipping certain names.
 
         Args:
             text (str): The text string to be cleaned.
@@ -171,15 +176,13 @@ class StorySageEntityExtractor():
     def _add_new_string_to_groups(self, new_string: str):
         """Adds a new string to existing entity groups or creates a new group.
 
-        This method vectorizes the input string and either adds it to an existing
-        group if the similarity threshold is met, or creates a new group. It uses
-        TF-IDF vectorization and cosine similarity for comparison.
+        This method uses TF-IDF vectorization and cosine similarity to decide
+        whether to merge the string into an existing group or form a new group.
 
         Args:
             new_string (str): The string to be added to entity groups.
 
         Example:
-            >>> extractor = StorySageEntityExtractor(series_data)
             >>> extractor._add_new_string_to_groups("John Smith")
         """
 
@@ -212,15 +215,15 @@ class StorySageEntityExtractor():
     def _extract_entities(self, documents: list[Document], labels: list[str]) -> dict[str, list[str]]:
         """Extracts named entities from documents using the GLiNER model.
 
-        Processes text documents to identify and extract named entities matching the
-        specified labels. Handles long documents by splitting them into manageable chunks.
+        Splits longer documents into smaller chunks and applies the model to each chunk.
+        Filters extracted entities by the specified labels (e.g., 'PERSON').
 
         Args:
-            documents (list[Document]): List of documents to process
-            labels (list[str]): Entity types to extract (e.g., ['CHARACTER', 'LOCATION'])
+            documents (list[Document]): List of documents to process.
+            labels (list[str]): Entity types to extract (e.g., ['CHARACTER', 'LOCATION']).
 
         Returns:
-            dict[str, list[str]]: Dictionary mapping entity labels to lists of extracted entities
+            dict[str, list[str]]: A dictionary mapping entity labels to lists of extracted strings.
 
         Example:
             >>> docs = [Document(page_content="John visited Paris with Mary")]
@@ -264,20 +267,18 @@ class StorySageEntityExtractor():
     def _get_dbscan_clusters(self, vectors: spmatrix, strings: List[str], eps: float = 0.5, min_samples: int = 2) -> StorySageEntityCollection:
         """Groups strings using DBSCAN clustering based on cosine similarity.
 
-        This method uses DBSCAN clustering to group strings based on cosine similarity
-        and returns the resulting clusters as a StorySageEntityCollection.
-
         Args:
-            strings (List[str]): List of strings to cluster
-            eps (float, optional): Maximum distance between samples for clustering. Defaults to 0.5.
-            min_samples (int, optional): Minimum number of samples for a cluster. Defaults to 2.
+            vectors (spmatrix): The vectorized representations of the strings.
+            strings (List[str]): The strings to be clustered.
+            eps (float, optional): The maximum distance between samples for clustering. Defaults to 0.5.
+            min_samples (int, optional): The minimum number of samples in a cluster. Defaults to 2.
 
         Returns:
-            StorySageEntityCollection: Collection of grouped entities
+            StorySageEntityCollection: A collection of grouped entities.
 
         Example:
-            >>> strings = ["John", "Johnny", "Paris", "London"]
-            >>> clusters = extractor._get_dbscan_clusters(strings)
+            >>> strings = ["John", "Johnny", "Paris"]
+            >>> clusters, noise = extractor._get_dbscan_clusters(vectors, strings, eps=0.3)
             >>> print(len(clusters.entity_groups))
             2
         """
@@ -311,6 +312,15 @@ class StorySageEntityExtractor():
         return StorySageEntityCollection.from_sets(clusters_list), noise_cluster
 
     def _merge_single_entities(self, entities_collection: StorySageEntityCollection, verbose: bool = False) -> StorySageEntityCollection:
+        """Merges single-entity groups with multi-entity groups if they share elements.
+
+        Args:
+            entities_collection (StorySageEntityCollection): The collection to merge single-entity groups into.
+            verbose (bool, optional): If True, prints out debugging information. Defaults to False.
+
+        Returns:
+            StorySageEntityCollection: Updated collection with merged groups.
+        """
         if verbose:
             print('---------------------------------')
             print('Merging single-entity groups with multi-entity groups')
@@ -357,6 +367,29 @@ class StorySageEntityExtractor():
     def _get_multipass_cluster(self, vectors: spmatrix, strings: list[str], eps_first: float=0.5,
                                eps_second: float=0.1, min_samples: int = 2, 
                                merge_single_entities: bool = True, verbose: bool = False) -> StorySageEntityCollection:
+        """Performs a two-stage clustering process to group entities more effectively.
+
+        First, DBSCAN clustering is applied with eps_first. Noise elements are then
+        re-clustered using eps_second. Depending on merge_single_entities, single-entity
+        groups may be merged into larger groups if they match.
+
+        Args:
+            vectors (spmatrix): TF-IDF vectors of the strings.
+            strings (list[str]): List of entity strings to be clustered.
+            eps_first (float, optional): The initial DBSCAN epsilon value. Defaults to 0.5.
+            eps_second (float, optional): The epsilon value for re-clustering noise points. Defaults to 0.1.
+            min_samples (int, optional): The minimum number of samples per cluster. Defaults to 2.
+            merge_single_entities (bool, optional): Whether to merge single-entity groups. Defaults to True.
+            verbose (bool, optional): If True, prints debugging information. Defaults to False.
+
+        Returns:
+            StorySageEntityCollection: The final grouped entities collection.
+
+        Example:
+            >>> grouped = extractor._get_multipass_cluster(vectors=vectors, strings=["John","Johnny"], eps_first=0.5, eps_second=0.2)
+            >>> print(len(grouped))
+            1
+        """
         
         collected_entities, noise_cluster = self._get_dbscan_clusters(vectors=vectors, strings=strings, eps=eps_first, min_samples=min_samples)
         if len(collected_entities) < 1:
@@ -445,6 +478,20 @@ class StorySageEntityExtractor():
         return collected_entities
 
     def _group_entity_strings(self, entity_strings_list: list[str]) -> StorySageEntityCollection:
+        """Groups a list of entity strings using a multi-pass clustering approach.
+
+        Args:
+            entity_strings_list (list[str]): List of strings to be grouped.
+
+        Returns:
+            StorySageEntityCollection: The resulting collection after grouping.
+
+        Example:
+            >>> entity_list = ["John", "Johnny", "Paris"]
+            >>> grouped = extractor._group_entity_strings(entity_list)
+            >>> print(len(grouped))
+            2
+        """
         
         self.vectorizer = TfidfVectorizer()
         vectors = self.vectorizer.fit_transform(entity_strings_list)
@@ -456,27 +503,22 @@ class StorySageEntityExtractor():
     def get_grouped_entities(self, documents: list[Document], labels: list[str] = ['PERSON']) -> StorySageEntityCollection:
         """Extracts and groups named entities from documents.
 
-        This method combines entity extraction and grouping:
-        1. Extracts entities using GLiNER model
-        2. Cleans extracted entity strings
-        3. Vectorizes entities using TF-IDF
-        4. Groups similar entities based on cosine similarity
-        5. Returns grouped entities as a StorySageEntityCollection
+        1. Extracts entities using GLiNER.
+        2. Cleans extracted entity strings.
+        3. Vectorizes and clusters them into groups.
+        4. Returns a StorySageEntityCollection of the grouped entities.
 
         Args:
-            documents (list[Document]): Documents to process for entity extraction
-            labels (list[str], optional): Entity types to extract. Defaults to ['CHARACTER']
+            documents (list[Document]): Documents to process for entity extraction.
+            labels (list[str], optional): The entity labels to extract. Defaults to ['PERSON'].
 
         Returns:
-            List[GroupType]: List of entity groups, each containing:
-                - Centroid vector (spmatrix)
-                - Matrix of member vectors (spmatrix)
-                - Set of entity strings (Set[str])
+            StorySageEntityCollection: A collection of grouped entities.
 
         Example:
             >>> docs = [Document(page_content="John and Johnny discussed their plans")]
-            >>> grouped = extractor.get_grouped_entities(docs)
-            >>> print(len(grouped))  # Number of entity groups
+            >>> grouped = extractor.get_grouped_entities(docs, labels=['PERSON'])
+            >>> print(len(grouped))
             1
         """
 
@@ -502,18 +544,18 @@ class StorySageEntityExtractor():
     def regroup_entities(self, new_threshold: float = 0.7) -> List[GroupType]:
         """Regroups entities based on a new similarity threshold.
 
-        This method regroups entities based on a new similarity threshold
-        and returns the updated list of entity groups.
+        Clears the current entity groups and re-adds them under the updated
+        similarity threshold, returning the new grouping.
 
         Args:
-            new_threshold (float, optional): New cosine similarity threshold. Defaults to 0.7.
+            new_threshold (float, optional): New cosine similarity threshold for grouping. Defaults to 0.7.
 
         Returns:
-            List[GroupType]: List of entity groups after regrouping
+            List[GroupType]: A list of tuples containing updated entity groups.
 
         Example:
-            >>> grouped = extractor.regroup_entities(new_threshold=0.8)
-            >>> print(len(grouped))
+            >>> new_groups = extractor.regroup_entities(new_threshold=0.8)
+            >>> print(len(new_groups))
         """
         
         self.similarity_threshold = new_threshold

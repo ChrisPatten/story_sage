@@ -7,21 +7,20 @@ from scipy.sparse import spmatrix
 GroupType = Tuple[spmatrix, spmatrix, Set[str]]
 
 class StorySageEntity():
-    """A class representing a single entity in the StorySage system.
+    """Represents a single entity in the StorySage system.
 
     This class handles the creation and management of individual entities, including
-    generating unique identifiers and managing group associations.
+    generating unique identifiers based on the entity's name and type.
+
+    Example usage:
+        entity = StorySageEntity("John Smith", "character")
+        print(entity.entity_name)  # "John Smith"
 
     Attributes:
-        entity_name (str): The name/label of the entity
-        entity_type (str): The classification type of the entity
-        entity_group_id (str): The ID of the group this entity belongs to
-        entity_id (str): Unique identifier generated from name and type
-
-    Example:
-        >>> entity = StorySageEntity("John Smith", "character")
-        >>> print(entity.entity_name)
-        'John Smith'
+        entity_name (str): The name or label of the entity.
+        entity_type (str): Classification type of the entity (e.g., "character").
+        entity_group_id (str): ID of the group this entity belongs to.
+        entity_id (str): Unique MD5 hash identifier generated from name and type.
     """
 
     def __init__(self, entity_name: str, entity_type: str = 'entity'):
@@ -44,19 +43,20 @@ class StorySageEntity():
 
 
 class StorySageEntityGroup():
-    """A class representing a group of related entities in the StorySage system.
+    """Represents a group of related entities in the StorySage system.
 
     This class manages collections of related entities, generating a unique group ID
-    and maintaining entity relationships.
+    if one is not provided. All entities in the group share a common entity_group_id.
+
+    Example usage:
+        entity1 = StorySageEntity("John Smith", "character")
+        entity2 = StorySageEntity("Johnny", "character")
+        group = StorySageEntityGroup([entity1, entity2])
+        print(group.entity_group_id)  # Prints the MD5 hash for the group
 
     Attributes:
-        entities (List[StorySageEntity]): List of entities in this group
-        entity_group_id (str): Unique identifier for the group
-
-    Example:
-        >>> entity1 = StorySageEntity("John Smith", "character")
-        >>> entity2 = StorySageEntity("Johnny", "character")
-        >>> group = StorySageEntityGroup([entity1, entity2])
+        entities (List[StorySageEntity]): List of entities in this group.
+        entity_group_id (str): Unique MD5 hash identifier for the group.
     """
 
     def __init__(self, entities: List[StorySageEntity], entity_group_id: str = None):
@@ -129,18 +129,20 @@ class StorySageEntityGroup():
         return self.entities[index]
 
 class StorySageEntityCollection():
-    """A class managing collections of entity groups in the StorySage system.
+    """Manages collections of entity groups in the StorySage system.
 
-    This class provides methods for managing multiple entity groups, including
-    serialization, deserialization, and various lookup operations.
+    Provides methods for adding, removing, and merging groups, as well as
+    serialization/deserialization. Useful for organizing large sets of related
+    entities and facilitating lookups by group or name.
+
+    Example usage:
+        collection = StorySageEntityCollection()
+        group = StorySageEntityGroup([StorySageEntity("John Smith", "character")])
+        collection.add_entity_group(group)
+        print(collection.to_json())  # Serialized JSON of the entire collection
 
     Attributes:
-        entity_groups (List[StorySageEntityGroup]): List of entity groups in the collection
-
-    Example:
-        >>> collection = StorySageEntityCollection()
-        >>> group = StorySageEntityGroup([StorySageEntity("John Smith", "character")])
-        >>> collection.add_entity_group(group)
+        entity_groups (List[StorySageEntityGroup]): Storage for multiple entity groups.
     """
 
     def __init__(self, entity_groups: List[StorySageEntityGroup] = []):

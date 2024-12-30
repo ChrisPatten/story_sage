@@ -9,7 +9,11 @@ from .story_sage_entity import StorySageEntityCollection
 from .data_classes.story_sage_series import StorySageSeries
 
 class ConditionalRequestIDFormatter(logging.Formatter):
-    """Custom formatter to include request_id only if it's not None."""
+    """Custom formatter to include request_id only if it's not None.
+    
+    Extends the built-in logging.Formatter to conditionally append a
+    request_id to the log message if present.
+    """
     
     def format(self, record):
         if hasattr(record, 'request_id') and record.request_id:
@@ -18,24 +22,45 @@ class ConditionalRequestIDFormatter(logging.Formatter):
         return super().format(record)
 
 class StorySage:
-    """
-    Main class for the Story Sage system that helps readers track story elements.
-    Coordinates between the retriever, chain, and state management components.
+    """Main class for the Story Sage system.
+
+    Coordinates between the retriever, chain, and state management components
+    to help readers track story elements.
+
+    Example usage:
+        story_sage = StorySage(
+            api_key="YOUR_API_KEY",
+            chroma_path="path/to/chroma",
+            chroma_collection_name="collection_name",
+            entities_dict={"meta": StorySageEntityCollection(...)},
+            series_list=[{"title": "Series Title"}],
+            n_chunks=5
+        )
+        answer, context, request_id = story_sage.invoke(
+            question="Who is the main character?",
+            book_number=1,
+            chapter_number=1,
+            series_id=1
+        )
+
+        Example result:
+            answer: "The main character is Rand al'Thor."
+            context: ["Rand al'Thor is introduced in the first chapter..."]
+            request_id: "123e4567-e89b-12d3-a456-426614174000"
     """
 
     def __init__(self, api_key: str, chroma_path: str, chroma_collection_name: str, 
                  entities_dict: dict[str, StorySageEntityCollection],
                  series_list: List[dict] = [], n_chunks: int = 5):
-        """
-        Initialize the StorySage instance with necessary components and configuration.
+        """Initializes the StorySage instance.
 
         Args:
-            api_key: API key for accessing external services
-            chroma_path: Path to the chroma database
-            chroma_collection_name: Name of the chroma collection
-            entities_dict: Dictionary of {<series_metadata_name>: <StorySageEntityCollection>}
-            series_list: List of series information
-            n_chunks: Number of chunks for the retriever to process
+            api_key (str): API key for accessing external services.
+            chroma_path (str): Path to the Chroma database.
+            chroma_collection_name (str): Name of the Chroma collection.
+            entities_dict (dict[str, StorySageEntityCollection]): Mapping of series metadata to entity collections.
+            series_list (List[dict], optional): A list of dictionaries representing series info. Defaults to [].
+            n_chunks (int, optional): Number of chunks for the retriever to process. Defaults to 5.
         """
         # Set up logging
         self._logger = logging.getLogger(__name__)
@@ -65,17 +90,16 @@ class StorySage:
 
     def invoke(self, question: str, book_number: int = None, 
                chapter_number: int = None, series_id: int = None) -> Tuple[str, List[str]]:
-        """
-        Process a user's question about the story with optional context parameters.
+        """Invokes the question-processing logic through the chain.
 
         Args:
-            question: The user's question about the story
-            book_number: Optional book number for context filtering
-            chapter_number: Optional chapter number for context filtering
-            series_id: Optional series ID for context filtering
+            question (str): The user's question about the story.
+            book_number (int, optional): Optional book number for context filtering. Defaults to None.
+            chapter_number (int, optional): Optional chapter number for context filtering. Defaults to None.
+            series_id (int, optional): Optional series ID for context filtering. Defaults to None.
 
         Returns:
-            Tuple containing (answer, context_list, request_id)
+            Tuple[str, List[str]]: A tuple containing the answer, context list, and generated request ID.
         """
         self.logger.info(f"Processing question: {question}")
         
