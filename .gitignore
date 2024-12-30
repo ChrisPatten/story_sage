@@ -13,6 +13,8 @@ booknlp/output/
 !requirements.txt
 logs/*.log*
 *.json
-series.yml
-series_prod.yml
 quality_test_results.html
+!series.example.yml
+node_modules/
+
+!entity_editor/*.json
