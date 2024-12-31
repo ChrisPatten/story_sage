@@ -5,7 +5,7 @@ __pycache__/
 *.epub
 .ds_store
 config.yml
-series.yml
+series*.yml
 *.faiss
 chunks/*.pkl
 chroma_data/

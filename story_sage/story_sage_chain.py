@@ -10,7 +10,7 @@ from .story_sage_entity import StorySageEntityCollection, StorySageEntity
 from .data_classes.story_sage_series import StorySageSeries
 import httpx
 from typing import Optional, List
-
+import spacy
 
 class StorySageChain(StateGraph):
     """Defines a chain of operations for the Story Sage system.
@@ -167,7 +167,10 @@ class StorySageChain(StateGraph):
         series_info = None
         if state.get('series_id'):
             self.logger.debug("Series ID found in state.")
-            series_info = next((series for series in self.series_list if series.series_id == state['series_id']), None)
+            series_info = next((series for series in self.series_list if series.series_id == int(state['series_id'])), None)
+            if not series_info:
+                print(self.series_list)
+                raise ValueError(f"Series ID {state['series_id']} not found in series list.")
             # Convert the question to lowercase for case-insensitive search
             question_text_search = state['question'].lower()
             series_entities = self.entities.get(series_info.series_metadata_name)
@@ -177,7 +180,7 @@ class StorySageChain(StateGraph):
                 for entity in entities:
                     if entity.entity_name in question_text_search:
                         entities_in_question.add(entity.entity_group_id)
-                self.logger.debug(f'Found entities for series: {series_info.series_name}')
+                self.logger.debug(f'Found entities: {entities_in_question}')
         # Return the entities as lists
         return {
             'entities': list(entities_in_question),
@@ -227,13 +230,15 @@ class StorySageChain(StateGraph):
                 query_str=state['question'],
                 context_filters=context_filters
             )
-
         # Format the retrieved context for the prompt
+
+        documents = retrieved_docs['documents'][0]
+        metadatas = retrieved_docs['metadatas'][0]
+
         context = [
-            f"Book {book_number}, Chapter {chapter_number}: {doc}"
-            for book_number, chapter_number, doc in retrieved_docs
+            f"Book {metadata['book_number']}, Chapter {metadata['chapter_number']}: {document}"
+            for document, metadata in zip(documents, metadatas)
         ]
-        self.logger.debug(f"Context retrieved: {context}")
         # Return the context
         return {'context': context}
   
