@@ -33,21 +33,35 @@ from story_sage.data_classes.story_sage_series import StorySageSeries
 import yaml
 import glob
 import chromadb
+import argparse
 
-# Configuration for the series to process
-series_metadata_name = 'wheel_of_time'
+# Parse command line arguments
+parser = argparse.ArgumentParser(description='Process text files into semantic chunks.')
+parser.add_argument('--series_name', type=str, help='Name of the series to process')
+args = parser.parse_args()
+
+series_metadata_name = args.series_name
+
+# Load configuration settings
+with open('config.yml', 'r') as file:
+    config = yaml.safe_load(file)
+
+chroma_path = config['CHROMA_PATH']
+chroma_collection = config['CHROMA_COLLECTION']
+series_path = config['SERIES_PATH']
+entities_path = config['ENTITIES_PATH']
 
 # Load entity metadata from JSON file
-with open('./entities/entities.json', 'r') as f:
+with open(entities_path, 'r') as f:
     entity_json = json.load(f)
     entity_collection = {key: StorySageEntityCollection.from_dict(value) for key, value in entity_json.items()}
 
 # Load series configuration from YAML
-with open('./series_prod.yml', 'r') as f:
+with open(series_path, 'r') as f:
     series_dict = yaml.safe_load(f.read())
 
 # Initialize ChromaDB client and embedding function
-chroma_client = chromadb.PersistentClient(path='./chroma_data')
+chroma_client = chromadb.PersistentClient(path=chroma_path)
 embedder = Embedder()
 vector_store = chroma_client.get_or_create_collection('story_sage', embedding_function=embedder)
 
@@ -72,9 +86,11 @@ def load_chunks_from_glob(glob_path):
 
 # Load document chunks for the specified series
 doc_collection = load_chunks_from_glob(f'./chunks/{series_metadata_name}/semantic_chunks/*.json')
+print('Loaded chunks')
 
 # Parse series information from configuration
 series_info = [StorySageSeries.from_dict(series) for series in series_dict]
+print('Got series info')
 
 # Find the series ID for the current series being processed
 series_id = [series.series_id for series in series_info if series.series_metadata_name == series_metadata_name][0]

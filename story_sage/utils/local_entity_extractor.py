@@ -540,6 +540,15 @@ class StorySageEntityExtractor():
         self.entity_collection = self._group_entity_strings(entity_strings_list=entity_strings_list)
         
         return self.entity_collection
+    
+    def group_intermediate_entities(self, path_to_intermediate: str) -> StorySageEntityCollection:
+
+        with open(path_to_intermediate, 'r') as f:
+            entity_strings_list = json.load(f)
+
+        self.entity_collection = self._group_entity_strings(entity_strings_list=entity_strings_list)
+
+        return self.entity_collection
 
     def regroup_entities(self, new_threshold: float = 0.7) -> List[GroupType]:
         """Regroups entities based on a new similarity threshold.

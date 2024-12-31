@@ -31,8 +31,14 @@ import os
 import json
 from story_sage.utils.chunker import StorySageChunker
 from tqdm import tqdm
+import argparse
 
-SERIES_NAME = 'harry_potter'
+# Parse command line arguments
+parser = argparse.ArgumentParser(description='Process text files into semantic chunks.')
+parser.add_argument('--series_name', type=str, help='Name of the series to process')
+args = parser.parse_args()
+
+SERIES_NAME = args.series_name
 
 
 
