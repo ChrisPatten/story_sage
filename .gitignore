@@ -1,20 +1,41 @@
+# Python specific ignores
 .python-version
 __pycache__/
 *.pkl
+
+# Text and document files
 *.txt
 *.epub
+
+# System files
 .ds_store
+.vscode/
+
+# Configuration files
 config.yml
 series*.yml
+
+# Data files
 *.faiss
-chunks/*.pkl
+chunks/*.pickle
 chroma_data/
+
+# Output directories
 booknlp/output/
-!requirements.txt
+
+# Log files
 logs/*.log*
+
+# JSON files
 *.json
+
+# HTML files
 quality_test_results.html
-!series.example.yml
+
+# Node modules
 node_modules/
 
+# Exceptions
+!requirements.txt
+!series.example.yml
 !entity_editor/*.json

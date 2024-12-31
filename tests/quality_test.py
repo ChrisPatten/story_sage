@@ -7,6 +7,7 @@ import yaml
 import json
 import markdown
 from tqdm import tqdm
+from story_sage.story_sage import StorySage, StorySageEntityCollection
 
 # Define paths to configuration files
 config_path = Path(__file__).parent.parent / 'config.yml'
@@ -36,10 +37,8 @@ story_sage = StorySage(
     api_key=api_key,
     chroma_path=chroma_path,
     chroma_collection_name=chroma_collection,
-    entities=entities,
-    series=series_list,
-    n_chunks=10,
-    log_level='CRITICAL'
+    entities_dict=entities,
+    series_list=series_list
 )
 
 def get_answer(question, series_id, book_number, chapter_number):
