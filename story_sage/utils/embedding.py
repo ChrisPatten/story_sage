@@ -184,6 +184,8 @@ def embed_documents(doc_collection: List[Document],
     entities_by_name = entity_collection.get_group_ids_by_name()
     allowed_characters_pattern = r'[^a-z\s-]'
 
+    print(f'Scan {len(doc_collection)} chunks for {len(entities_by_name)} characters.')
+
     for doc in tqdm(doc_collection, desc='Identifying characters in documents'):
         book_number = doc.metadata['book_number']
         chapter_number = doc.metadata['chapter_number']
