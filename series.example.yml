@@ -1,6 +1,12 @@
 - series_id: 1
   series_name: 'Sherlock Holmes'
   series_metadata_name: 'sherlock_holmes'
+  entity_settings:
+    names_to_skip:
+      - 'light'
+    person_titles:
+      - 'doctor'
+      - 'my dear'
   books:
     - number_in_series: 1
       title: 'A Study in Scarlet'
