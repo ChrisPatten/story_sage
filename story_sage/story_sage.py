@@ -5,6 +5,7 @@ from .data_classes.story_sage_state import StorySageState
 from .vector_store import StorySageRetriever
 from .story_sage_chain import StorySageChain
 from .data_classes.story_sage_config import StorySageConfig
+from .story_sage_conversation import StorySageConversation
 
 class ConditionalRequestIDFormatter(logging.Formatter):
     """Custom formatter to include request_id only if it's not None.
@@ -85,7 +86,8 @@ class StorySage:
         
 
     def invoke(self, question: str, book_number: int = None, 
-               chapter_number: int = None, series_id: int = None) -> Tuple[str, List[str], str, List[str]]:
+               chapter_number: int = None, series_id: int = None,
+               conversation: StorySageConversation = None) -> Tuple[str, List[str], str, List[str]]:
         """Invokes the question-processing logic through the chain.
 
         Args:
@@ -114,7 +116,8 @@ class StorySage:
             context=None,
             answer=None,
             entities=[],
-            order_by='most_recent'
+            order_by='most_recent',
+            conversation=conversation
         )
 
         try:

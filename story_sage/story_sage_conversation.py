@@ -140,6 +140,13 @@ class StorySageConversation():
         data = json.dumps([turn.to_json() for turn in self.turns])
         self.redis.set(key, data, ex=self.redis_ex)
 
+    def __str__(self) -> str:
+        conversation = []
+        for turn in self.turns:
+            conversation.append(f"HUMAN: {turn.question}")
+            conversation.append(f"COMPUTER: {turn.response}")
+        return '\n'.join(conversation)
+
 # Example usage:
 # redis_client = redis.Redis(host='localhost', port=6379, db=0)
 # conversation = StorySageConversation(redis=redis_client)
