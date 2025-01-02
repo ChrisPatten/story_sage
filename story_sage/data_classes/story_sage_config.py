@@ -112,7 +112,6 @@ class StorySageConfig:
         with open(config['ENTITIES_PATH'], 'r') as file:
             entities_dict = json.load(file)
             logger.debug(f"Loaded entities from {config['ENTITIES_PATH']}")
-            logger.debug(f"Entities: {entities_dict}")
             ssconfig.entities = {key: StorySageEntityCollection.from_dict(value) for key, value in entities_dict.items()}
 
         # Load series from SERIES_PATH

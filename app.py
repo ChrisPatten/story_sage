@@ -131,7 +131,13 @@ def invoke_story_sage():
             'series_id': data['series_id']
         }
         result, context, request_id, entities = story_sage.invoke(**payload)
-        conversation.add_turn(data['question'], entities, context, result, request_id)
+        try:
+            conversation.add_turn(question=data['question'], detected_entities=entities, 
+                                context=context, response=result, request_id=request_id)
+        except Exception as e:
+            logger.error(f"Error adding turn to conversation: {e}")
+            logger.error(f'Result: {result}\nContext: {context}\nRequest ID: {request_id}\nEntities: {entities}')
+            raise e
         return jsonify({'result': result, 'context': context, 'request_id': request_id, 'conversation_id': str(conversation.conversation_id)})
     except Exception as e:
         # Log the error and return a server error response

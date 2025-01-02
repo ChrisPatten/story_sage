@@ -1,27 +1,27 @@
-import tempfile
 import json
 from typing import List, Tuple
 import uuid
-from .story_sage_entity import StorySageEntityCollection, StorySageEntityGroup, StorySageEntity
-import glob
 import redis
+import logging
+
+logger = logging.getLogger(__name__)
 
 class TurnType():
     """Represents a turn in a conversation.
 
     Attributes:
         question (str): The user's question.
-        detected_entities (List[StorySageEntityGroup]): List of detected entities in the question.
+        detected_entities (List[str]): List of detected entities in the question.
         context (List[str]): The context returned by the system.
         response (str): The system's response.
         request_id (str): The request identifier.
     """
     
-    def __init__(self, question: str, detected_entities: List[StorySageEntityGroup], context: List[str], response: str, request_id: str):
+    def __init__(self, question: str, detected_entities: List[str], context: List[str], response: str, request_id: str):
         """
         Args:
             question (str): The user's question.
-            detected_entities (List[StorySageEntityGroup]): List of detected entities in the question.
+            detected_entities (List[str]): List of detected entities in the question.
             context (List[str]): The context returned by the system.
             response (str): The system's response.
             request_id (str): The request identifier.
@@ -38,13 +38,18 @@ class TurnType():
         Returns:
             dict: A dictionary representation of the turn.
         """
-        return {
-            'question': self.question,
-            'detected_entities': [entity.to_json() for entity in self.detected_entities],
-            'context': self.context,
-            'response': self.response,
-            'request_id': self.request_id
-        }
+        try:
+            return {
+                'question': self.question,
+                'detected_entities': self.detected_entities,
+                'context': self.context,
+                'response': self.response,
+                'request_id': self.request_id
+            }
+        except Exception as e:
+            logger.error(f"Error converting turn to JSON: {e}")
+            logger.error(self.detected_entities)
+            raise e
 
 class StorySageConversation():
     """Represents a conversation in the StorySage system.
@@ -85,26 +90,27 @@ class StorySageConversation():
             else:
                 self.turns = []
 
-    def add_turn(self, question: str, detected_entities: List[StorySageEntityGroup], 
+    def add_turn(self, question: str, detected_entities: List[str], 
                  context: List[str], response: str, request_id: str) -> None:
         """Adds a turn to the conversation history.
 
         Args:
             question (str): The user's question.
-            detected_entities (List[StorySageEntityGroup]): List of detected entities in the question.
+            detected_entities (List[str]): List of detected entities in the question.
             context (List[str]): The context returned by the system.
             response (str): The system's response.
             request_id (str): The request identifier.
         """
-        turn = TurnType(question, detected_entities, context, response, request_id)
+        turn = TurnType(question=question, detected_entities=detected_entities, 
+                        context=context, response=response, request_id=request_id)
         self.turns.append(turn)
         self._save_to_cache()
 
-    def get_history(self) -> List[Tuple[str, List[StorySageEntityGroup], List[str], str, str]]:
+    def get_history(self) -> List[Tuple[str, List[str], List[str], str, str]]:
         """Returns the conversation history.
 
         Returns:
-            List[Tuple[str, List[StorySageEntityGroup], List[str], str, str]]: A list of tuples representing each turn in the conversation.
+            List[Tuple[str, List[str], List[str], str, str]]: A list of tuples representing each turn in the conversation.
         """
         return [(turn.question, turn.detected_entities, turn.context, turn.response, turn.request_id) for turn in self.turns]
     
@@ -137,6 +143,6 @@ class StorySageConversation():
 # Example usage:
 # redis_client = redis.Redis(host='localhost', port=6379, db=0)
 # conversation = StorySageConversation(redis=redis_client)
-# conversation.add_turn("What is the weather today?", [StorySageEntityGroup()], ["Sunny"], "It's sunny today.", "req123")
+# conversation.add_turn("What is the weather today?", [], ["Sunny"], "It's sunny today.", "req123")
 # history = conversation.get_history()
 # print(history)

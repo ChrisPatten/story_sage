@@ -20,6 +20,7 @@ redis_config.conf
 *.faiss
 chunks/*.pickle
 chroma_data/
+*.rdb
 
 # Output directories
 booknlp/output/
