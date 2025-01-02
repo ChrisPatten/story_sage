@@ -114,10 +114,13 @@ def invoke_story_sage():
         return jsonify({'error': f'Missing parameter! Request must include {", ".join(required_keys)}'}), 400
     if 'conversation_id' in data and data['conversation_id']:
         logger.debug(f'Conversation ID: {data["conversation_id"]}')
-        conversation = StorySageConversation(data['conversation_id'])
+        conversation = StorySageConversation(conversation_id=data['conversation_id'], 
+                                             redis=STORY_SAGE_CONFIG.redis_instance, 
+                                             redis_ex=STORY_SAGE_CONFIG.redis_ex)
     else:
         logger.debug('No conversation ID provided')
-        conversation = StorySageConversation()
+        conversation = StorySageConversation(redis=STORY_SAGE_CONFIG.redis_instance, 
+                                             redis_ex=STORY_SAGE_CONFIG.redis_ex)
 
     try:
         # Invoke the StorySage engine with the provided parameters

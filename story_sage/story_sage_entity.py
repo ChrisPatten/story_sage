@@ -40,6 +40,24 @@ class StorySageEntity():
     def __str__(self):
         """Returns a string representation of the StorySageEntity object."""
         return f"Entity: {self.entity_name} ({self.entity_type})"
+    
+    def to_dict(self) -> dict:
+        """Converts the entity to a dictionary representation.
+
+        Returns:
+            dict: Dictionary containing entity data
+
+        Example:
+            >>> entity_dict = entity.to_dict()
+            >>> print(type(entity_dict))
+            <class 'dict'>
+        """
+        return {
+            'entity_name': self.entity_name,
+            'entity_type': self.entity_type,
+            'entity_id': self.entity_id,
+            'entity_group_id': self.entity_group_id
+        }
 
 
 class StorySageEntityGroup():
@@ -127,6 +145,25 @@ class StorySageEntityGroup():
     def __getitem__(self, index):
         """Allows subscriptable access to entities in the group by index."""
         return self.entities[index]
+    
+    def to_json(self) -> json:
+        """Converts the entity group to a JSON string representation.
+
+        Returns:
+            str: JSON formatted string containing all entity data
+
+        Example:
+            >>> json_str = group.to_json()
+            >>> print(type(json_str))
+            <class 'str'>
+        """
+
+        group_dict = {
+            'entity_group_id': self.entity_group_id,
+            'entities': [entity.to_dict() for entity in self.entities]
+        }
+
+        return group_dict
 
 class StorySageEntityCollection():
     """Manages collections of entity groups in the StorySage system.

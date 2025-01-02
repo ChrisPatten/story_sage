@@ -70,7 +70,7 @@ if __name__ == '__main__':
     chunker = StorySageChunker(model_name='all-MiniLM-L6-v2')
     text_dict = chunker.read_text_files(file_path)
     
-    for book_name, book_info in text_dict.items():
+    for _, book_info in text_dict.items():
         book_number = book_info['book_number']
         for chapter_number, chapter_text in tqdm(book_info['chapters'].items(), desc=f'Processing book {book_number}'):
             chapter_text_length = len(''.join(chapter_text).replace(' ', ''))

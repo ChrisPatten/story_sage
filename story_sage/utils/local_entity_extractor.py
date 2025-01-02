@@ -549,37 +549,3 @@ class StorySageEntityExtractor():
         self.entity_collection = self._group_entity_strings(entity_strings_list=entity_strings_list)
 
         return self.entity_collection
-
-    def regroup_entities(self, new_threshold: float = 0.7) -> List[GroupType]:
-        """Regroups entities based on a new similarity threshold.
-
-        Clears the current entity groups and re-adds them under the updated
-        similarity threshold, returning the new grouping.
-
-        Args:
-            new_threshold (float, optional): New cosine similarity threshold for grouping. Defaults to 0.7.
-
-        Returns:
-            List[GroupType]: A list of tuples containing updated entity groups.
-
-        Example:
-            >>> new_groups = extractor.regroup_entities(new_threshold=0.8)
-            >>> print(len(new_groups))
-        """
-        
-        self.similarity_threshold = new_threshold
-        self.entities = []
-        entity_strings = set()
-        for group in self.entity_collection.entity_groups:
-            for entity in group.entities:
-                entity_strings.add(entity.entity_name)
-
-        self.vectorizer = TfidfVectorizer()
-        self.vectorizer.fit_transform(entity_strings)
-
-        for entity in tqdm(entity_strings, desc=f'Regrouping entities with threshold {new_threshold}'):
-            self._add_new_string_to_groups(entity)
-
-        self.entity_collection = StorySageEntityCollection.from_sets(self.entities)
-
-        return self.entity_collection
