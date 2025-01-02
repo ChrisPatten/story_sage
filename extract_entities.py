@@ -29,6 +29,7 @@ import glob
 import re
 import os
 from story_sage.utils.local_entity_extractor import StorySageEntityExtractor
+from story_sage.data_classes.story_sage_config import StorySageConfig
 from story_sage.utils.embedding import load_chunk_from_disk
 import argparse
 
@@ -45,24 +46,10 @@ series_metadata_name = args.series_name
 with open('config.yml', 'r') as file:
     config = yaml.safe_load(file)
 
-chroma_path = config['CHROMA_PATH']
-chroma_collection = config['CHROMA_COLLECTION']
-series_path = config['SERIES_PATH']
-entities_path = config['ENTITIES_PATH']
-
-# Load existing entities or create new if not exists
-if not os.path.exists(entities_path):
-    entities = {}
-else:
-    with open(entities_path, 'r') as file:
-        entities = json.load(file)
-
-# Load series metadata and map series names to IDs
-with open(series_path, 'r') as file:
-    series_list = yaml.safe_load(file)
+STORY_SAGE_CONFIG = StorySageConfig.from_config(config)
 
 # Find the target series information based on series_id
-target_series_info = next(series for series in series_list if series['series_metadata_name'] == series_metadata_name)
+target_series_info = next(series for series in STORY_SAGE_CONFIG.series if series['series_metadata_name'] == series_metadata_name)
 
 def get_all_chunks(chunk_glob: str) -> dict:
     """Load and combine all text chunks from matching JSON files.
@@ -102,8 +89,8 @@ else:
     grouped_entities = extractor.group_intermediate_entities(path_to_intermediate = path_to_entities)
 
 # Update the entities dictionary with new extractions
-entities[target_series_info['series_metadata_name']] = grouped_entities.to_dict()
+STORY_SAGE_CONFIG.entities[target_series_info['series_metadata_name']] = grouped_entities.to_dict()
 
 # Save updated entities back to JSON file
-with open(entities_path, 'w') as file:
-    file.write(json.dumps(entities, indent=4))
+with open(config['ENTITIES_PATH'], 'w') as file:
+    file.write(json.dumps(STORY_SAGE_CONFIG.entities, indent=4))

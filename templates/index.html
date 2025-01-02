@@ -123,6 +123,8 @@
     <!-- Move your custom script here -->
     <script>
         document.addEventListener('DOMContentLoaded', async function() {
+            let conversationId = null; // Initialize conversationId
+
             // Fetch series metadata from /invoke
             const response = await fetch('/invoke', { method: 'GET' });
             const seriesData = await response.json();
@@ -250,7 +252,8 @@
                             question, 
                             book_number, 
                             chapter_number,
-                            series_id
+                            series_id,
+                            conversation_id: conversationId // Include conversation_id if available
                         })
                     });
 
@@ -260,6 +263,9 @@
                     chatBody.removeChild(processingMessage);
 
                     if (response.ok) {
+                        // Capture conversation_id from the response
+                        conversationId = result.conversation_id;
+
                         // Append bot's response
                         const botMessage = document.createElement('div');
                         botMessage.classList.add('chat-message', 'bot');

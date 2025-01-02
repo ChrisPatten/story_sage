@@ -1,12 +1,10 @@
 import logging
-import yaml
 import uuid
 from typing import Tuple, Optional, Dict, List
 from .data_classes.story_sage_state import StorySageState
 from .vector_store import StorySageRetriever
 from .story_sage_chain import StorySageChain
-from .story_sage_entity import StorySageEntityCollection
-from .data_classes.story_sage_series import StorySageSeries
+from .data_classes.story_sage_config import StorySageConfig
 
 class ConditionalRequestIDFormatter(logging.Formatter):
     """Custom formatter to include request_id only if it's not None.
@@ -49,9 +47,7 @@ class StorySage:
             request_id: "123e4567-e89b-12d3-a456-426614174000"
     """
 
-    def __init__(self, api_key: str, chroma_path: str, chroma_collection_name: str, 
-                 entities_dict: dict[str, StorySageEntityCollection],
-                 series_list: List[dict] = [], n_chunks: int = 5):
+    def __init__(self, config: StorySageConfig):
         """Initializes the StorySage instance.
 
         Args:
@@ -75,21 +71,21 @@ class StorySage:
         # Initialize request_id
         self.request_id = None
 
-        self.entities = {key: StorySageEntityCollection.from_dict(value) for key, value in entities_dict.items()}
+        self.entities = config.entities
 
         # Initialize series info
-        self.series_list = [StorySageSeries.from_dict(series) for series in series_list]
+        self.series_list = config.series
 
         # Create a LoggerAdapter to include class attributes
         self.logger = logging.LoggerAdapter(self._logger, {'request_id': self.request_id})
 
         # Initialize retriever and chain components
-        self.retriever = StorySageRetriever(chroma_path, chroma_collection_name, n_chunks)
-        self.chain = StorySageChain(api_key, self.entities, self.series_list, self.retriever, self.logger)
+        self.retriever = StorySageRetriever(config.chroma_path, config.chroma_collection, config.n_chunks)
+        self.chain = StorySageChain(config.openai_api_key, self.entities, self.series_list, self.retriever, self.logger)
         
 
     def invoke(self, question: str, book_number: int = None, 
-               chapter_number: int = None, series_id: int = None) -> Tuple[str, List[str]]:
+               chapter_number: int = None, series_id: int = None) -> Tuple[str, List[str], str, List[str]]:
         """Invokes the question-processing logic through the chain.
 
         Args:
@@ -99,7 +95,7 @@ class StorySage:
             series_id (int, optional): Optional series ID for context filtering. Defaults to None.
 
         Returns:
-            Tuple[str, List[str]]: A tuple containing the answer, context list, and generated request ID.
+            Tuple[str, List[str], str, List[str]]: A tuple containing the answer, context list, generated request ID, and list of entity IDs.
         """
         self.logger.info(f"Processing question: {question}")
         
@@ -129,7 +125,7 @@ class StorySage:
             self.logger.debug(f"Generated answer: {result['answer']}")
             self.logger.debug(f"Retrieved context: {result['context']}")
             
-            return result['answer'], result['context'], self.request_id
+            return result['answer'], result['context'], self.request_id, result['entities']
             
         except Exception as e:
             self.logger.error(f"Error processing question: {e}")
