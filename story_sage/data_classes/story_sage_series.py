@@ -78,3 +78,17 @@ class StorySageSeries:
             entity_settings=entity_settings,
             books=books
         )
+    
+    def to_metadata_json(self) -> dict:
+        """
+        Converts the series to a metadata JSON dictionary.
+
+        Returns:
+            dict: A dictionary representation of the series metadata.
+        """
+        return {
+            'series_id': self.series_id,
+            'series_name': self.series_name,
+            'series_metadata_name': self.series_metadata_name,
+            'books': [book.to_json() for book in self.books]
+        }

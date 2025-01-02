@@ -54,18 +54,7 @@ class StorySageConfig:
                 ...
             ]
         """
-        result = []
-        for series in self.series:
-            series_dict = {}
-            series_dict['series_id'] = series.series_id
-            series_dict['series_name'] = series.series_name
-            series_dict['series_metadata_name'] = series.series_metadata_name
-            series_dict['books'] = []
-            for book in series.books:
-                series_dict['books'].append(book.to_json())
-            result.append(series_dict)
-
-        return result
+        return [series.to_metadata_json() for series in self.series]
 
     @classmethod
     def from_config(cls, config: dict) -> 'StorySageConfig':
