@@ -182,18 +182,21 @@ def feedback():
         curl -X POST http://localhost:5010/feedback -H "Content-Type: application/json" -d '{
             "request_id": "123e4567-e89b-12d3-a456-426614174000",
             "feedback": "Great answer!",
-            "type": "praise"
+            "type": "praise",
+            "conversation_id": "123e4567-e89b-12d3-a456-426614174000"
         }'
     """
     data = request.get_json()
-    required_keys = ['request_id', 'feedback', 'type']
+    required_keys = ['conversation_id', 'feedback', 'type']
     if not all(key in data for key in required_keys):
         # Return an error if any required parameter is missing
         return jsonify({'error': f'Missing parameter! Request must include {", ".join(required_keys)}'}), 400
 
     try:
+        conversation = StorySageConversation(conversation_id=data['conversation_id'], redis=STORY_SAGE_CONFIG.redis_instance, redis_ex=STORY_SAGE_CONFIG.redis_ex)
         # Process the feedback here (e.g., save to a database or log)
-        feedback_logger.info(f"Feedback received for request {data['request_id']}|{data['feedback']}|{data['type']}")
+        feedback_logger.info(f"Feedback received for request {data['conversation_id']}|{data['feedback']}|{data['type']}")
+        feedback_logger.info(conversation.get_log())
         return jsonify({'message': 'Feedback received.'})
     except Exception as e:
         # Log the error and return a server error response

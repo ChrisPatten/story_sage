@@ -17,7 +17,7 @@ class TurnType():
         request_id (str): The request identifier.
     """
     
-    def __init__(self, question: str, detected_entities: List[str], context: List[str], response: str, request_id: str):
+    def __init__(self, question: str, detected_entities: List[str], context: List[str], response: str, request_id: str, sequence: int):
         """
         Args:
             question (str): The user's question.
@@ -31,6 +31,7 @@ class TurnType():
         self.context = context
         self.response = response
         self.request_id = request_id
+        self.sequence = sequence
 
     def to_json(self) -> dict:
         """Converts the turn to a JSON dictionary.
@@ -44,7 +45,8 @@ class TurnType():
                 'detected_entities': self.detected_entities,
                 'context': self.context,
                 'response': self.response,
-                'request_id': self.request_id
+                'request_id': self.request_id,
+                'sequence': self.sequence
             }
         except Exception as e:
             logger.error(f"Error converting turn to JSON: {e}")
@@ -101,16 +103,18 @@ class StorySageConversation():
             response (str): The system's response.
             request_id (str): The request identifier.
         """
+        next_sequence = len(self.turns)
         turn = TurnType(question=question, detected_entities=detected_entities, 
-                        context=context, response=response, request_id=request_id)
+                        context=context, response=response, request_id=request_id,
+                        sequence=next_sequence)
         self.turns.append(turn)
         self._save_to_cache()
 
-    def get_history(self) -> List[Tuple[str, List[str], List[str], str, str]]:
+    def get_history(self) -> List[Tuple[str, List[str], List[str], str, str, int]]:
         """Returns the conversation history.
 
         Returns:
-            List[Tuple[str, List[str], List[str], str, str]]: A list of tuples representing each turn in the conversation.
+            List[Tuple[str, List[str], List[str], str, str, int]]: A list of tuples representing each turn in the conversation.
         """
         return [(turn.question, turn.detected_entities, turn.context, turn.response, turn.request_id) for turn in self.turns]
     
@@ -127,7 +131,7 @@ class StorySageConversation():
         data = self.redis.get(key)
         if data:
             turns = json.loads(data)
-            return [TurnType(turn['question'], turn['detected_entities'], turn['context'], turn['response'], turn['request_id']) for turn in turns]
+            return [TurnType(turn['question'], turn['detected_entities'], turn['context'], turn['response'], turn['request_id'], turn['sequence']) for turn in turns]
         else:
             return []
         
@@ -146,6 +150,18 @@ class StorySageConversation():
             conversation.append(f"HUMAN: {turn.question}")
             conversation.append(f"COMPUTER: {turn.response}")
         return '\n'.join(conversation)
+    
+    def get_log(self) -> str:
+        """Returns the conversation log as a string.
+
+        Returns:
+            str: A string representation of the conversation log.
+        """
+        conversation = []
+        for turn in self.turns:
+            conversation.append(turn.to_json())
+
+        return json.dumps(conversation, indent=4)
 
 # Example usage:
 # redis_client = redis.Redis(host='localhost', port=6379, db=0)
