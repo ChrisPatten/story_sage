@@ -7,7 +7,8 @@ import yaml
 import json
 import markdown
 from tqdm import tqdm
-from story_sage.story_sage import StorySage, StorySageEntityCollection
+from story_sage.story_sage import StorySage
+from story_sage.data_classes.story_sage_config import StorySageConfig
 
 # Define paths to configuration files
 config_path = Path(__file__).parent.parent / 'config.yml'
@@ -18,27 +19,15 @@ try:
     # Load configuration and data files
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
-    with open(config['SERIES_PATH'], 'r') as file:
-        series_list = yaml.safe_load(file)
-    with open(config['ENTITIES_PATH'], 'r') as file:
-        entities = json.load(file)
+    STORY_SAGE_CONFIG = StorySageConfig.from_config(config)
     with open(test_config_path, 'r') as file:
         test_config = yaml.safe_load(file)
 except Exception as e:
     raise e
 
-# Extract configuration settings
-api_key = config['OPENAI_API_KEY']
-chroma_path = config['CHROMA_PATH']
-chroma_collection = config['CHROMA_COLLECTION']
-
 # Initialize StorySage instance with configuration settings
 story_sage = StorySage(
-    api_key=api_key,
-    chroma_path=chroma_path,
-    chroma_collection_name=chroma_collection,
-    entities_dict=entities,
-    series_list=series_list
+    config=STORY_SAGE_CONFIG
 )
 
 def get_answer(question, series_id, book_number, chapter_number):

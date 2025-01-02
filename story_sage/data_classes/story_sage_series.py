@@ -17,6 +17,14 @@ class Book:
     book_metadata_name: str
     number_of_chapters: int
 
+    def to_json(self):
+        return {
+            'number_in_series': self.number_in_series,
+            'title': self.title,
+            'book_metadata_name': self.book_metadata_name,
+            'number_of_chapters': self.number_of_chapters
+        }
+
 @dataclass
 class EntitySettings:
     """

@@ -24,6 +24,8 @@ Note:
 from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS, cross_origin
 from story_sage.story_sage import StorySage
+from story_sage.story_sage_conversation import StorySageConversation
+from story_sage.data_classes.story_sage_config import StorySageConfig
 import yaml
 import os
 import json
@@ -64,50 +66,14 @@ try:
     with open(CONFIG_PATH, 'r') as file:
         config = yaml.safe_load(file)
         logger.debug(f'Loaded {CONFIG_PATH}')
-    with open(config['SERIES_PATH'], 'r') as file:
-        series_list = yaml.safe_load(file)
-        logger.debug(f'LOADED {config["SERIES_PATH"]}')
+    STORY_SAGE_CONFIG = StorySageConfig.from_config(config)
 except Exception as e:
-    # Log any errors that occur during the loading of configuration files
-    logger.error(f"Error loading configuration files: {e}")
+    logger.error(f"Error loading configuration: {e}")
     raise
-    
-# Extract configuration settings
-api_key = config['OPENAI_API_KEY']
-chroma_path = config['CHROMA_PATH']
-chroma_collection = config['CHROMA_COLLECTION']
-
-def collect_entities(series_metadata_names):
-    entities_dict = {}
-    for name in series_metadata_names:
-        try:
-            if not os.path.exists(f'./entities/{name}/entities.json'):
-                logger.warning(f'Entities file for {name} does not exist.')
-                continue
-            with open(f'./entities/{name}/entities.json', 'r') as file:
-                entities_data = json.load(file)
-                entities_dict[name] = entities_data
-                logger.debug(f'Loaded entities for {name}')
-        except Exception as e:
-            logger.error(f"Error loading entities for {name}: {e}")
-    return entities_dict
-
-# Collect series metadata names from the series list
-series_metadata_names = [series['series_metadata_name'] for series in series_list]
-
-# Load the entity files using the collect_entities function
-with open(config['ENTITIES_PATH'], 'r') as file:
-    entities_dict = json.load(file)
-    logger.debug(f'Loaded {config["ENTITIES_PATH"]}')
 
 # Initialize the StorySage engine with the provided configurations
 story_sage = StorySage(
-    api_key=api_key,
-    chroma_path=chroma_path,
-    chroma_collection_name=chroma_collection,
-    entities_dict=entities_dict,
-    series_list=series_list,
-    n_chunks=15  # Number of text chunks to process
+    config = STORY_SAGE_CONFIG
 )
 
 @app.route('/')
@@ -146,11 +112,33 @@ def invoke_story_sage():
     if not all(key in data for key in required_keys):
         # Return an error if any required parameter is missing
         return jsonify({'error': f'Missing parameter! Request must include {", ".join(required_keys)}'}), 400
+    if 'conversation_id' in data and data['conversation_id']:
+        logger.debug(f'Conversation ID: {data["conversation_id"]}')
+        conversation = StorySageConversation(conversation_id=data['conversation_id'], 
+                                             redis=STORY_SAGE_CONFIG.redis_instance, 
+                                             redis_ex=STORY_SAGE_CONFIG.redis_ex)
+    else:
+        logger.debug('No conversation ID provided')
+        conversation = StorySageConversation(redis=STORY_SAGE_CONFIG.redis_instance, 
+                                             redis_ex=STORY_SAGE_CONFIG.redis_ex)
 
     try:
         # Invoke the StorySage engine with the provided parameters
-        result, context, request_id = story_sage.invoke(**data)
-        return jsonify({'result': result, 'context': context, 'request_id': request_id})
+        payload = {
+            'question': data['question'],
+            'book_number': data['book_number'],
+            'chapter_number': data['chapter_number'],
+            'series_id': data['series_id']
+        }
+        result, context, request_id, entities = story_sage.invoke(**payload)
+        try:
+            conversation.add_turn(question=data['question'], detected_entities=entities, 
+                                context=context, response=result, request_id=request_id)
+        except Exception as e:
+            logger.error(f"Error adding turn to conversation: {e}")
+            logger.error(f'Result: {result}\nContext: {context}\nRequest ID: {request_id}\nEntities: {entities}')
+            raise e
+        return jsonify({'result': result, 'context': context, 'request_id': request_id, 'conversation_id': str(conversation.conversation_id)})
     except Exception as e:
         # Log the error and return a server error response
         logger.error(f"Error invoking StorySage: {e}")
@@ -175,7 +163,7 @@ def get_series():
            ...
         ]
     """
-    return jsonify(series_list)
+    return jsonify(STORY_SAGE_CONFIG.get_series_json())
 
 @app.route('/feedback', methods=['POST'])
 @cross_origin()
@@ -194,18 +182,21 @@ def feedback():
         curl -X POST http://localhost:5010/feedback -H "Content-Type: application/json" -d '{
             "request_id": "123e4567-e89b-12d3-a456-426614174000",
             "feedback": "Great answer!",
-            "type": "praise"
+            "type": "praise",
+            "conversation_id": "123e4567-e89b-12d3-a456-426614174000"
         }'
     """
     data = request.get_json()
-    required_keys = ['request_id', 'feedback', 'type']
+    required_keys = ['conversation_id', 'feedback', 'type']
     if not all(key in data for key in required_keys):
         # Return an error if any required parameter is missing
         return jsonify({'error': f'Missing parameter! Request must include {", ".join(required_keys)}'}), 400
 
     try:
+        conversation = StorySageConversation(conversation_id=data['conversation_id'], redis=STORY_SAGE_CONFIG.redis_instance, redis_ex=STORY_SAGE_CONFIG.redis_ex)
         # Process the feedback here (e.g., save to a database or log)
-        feedback_logger.info(f"Feedback received for request {data['request_id']}|{data['feedback']}|{data['type']}")
+        feedback_logger.info(f"Feedback received for request {data['conversation_id']}|{data['feedback']}|{data['type']}")
+        feedback_logger.info(conversation.get_log())
         return jsonify({'message': 'Feedback received.'})
     except Exception as e:
         # Log the error and return a server error response

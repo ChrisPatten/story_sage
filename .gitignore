@@ -14,11 +14,13 @@ __pycache__/
 # Configuration files
 config.yml
 series*.yml
+redis_config.conf
 
 # Data files
 *.faiss
 chunks/*.pickle
 chroma_data/
+*.rdb
 
 # Output directories
 booknlp/output/

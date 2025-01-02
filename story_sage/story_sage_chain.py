@@ -96,7 +96,7 @@ class StorySageChain(StateGraph):
         self.llm = ChatOpenAI(api_key=api_key, model='gpt-4o-mini', http_client=httpx.Client(verify=False))
         # Define the prompt template for generating responses
         self.prompt = PromptTemplate(
-            input_variables=['question', 'context', 'book_number', 'chapter_number'],
+            input_variables=['question', 'context', 'book_number', 'chapter_number', 'conversation'],
             template="""
                 HUMAN
 
@@ -112,8 +112,13 @@ class StorySageChain(StateGraph):
                 The reader is currently in Book {book_number}, Chapter {chapter_number}. Don't limit your responses to just this book. Answer the reader's question
                 taking into account all the context provided.
 
+                ---------------------
                 Question: {question} 
+                ---------------------
+                Previous Conversation: {conversation}
+                ---------------------
                 Context: {context} 
+                ---------------------
                 Answer:
             """
         )
@@ -269,7 +274,9 @@ class StorySageChain(StateGraph):
         docs_content = '\n\n'.join(state['context'])
         # Invoke the prompt with the question and context
         messages = self.prompt.invoke(
-            {'question': state['question'], 'context': docs_content, 'book_number': state['book_number'], 'chapter_number': state['chapter_number']}
+            {'question': state['question'], 'context': docs_content, 
+             'book_number': state['book_number'], 'chapter_number': state['chapter_number'],
+             'conversation': state['conversation']}
         )
         self.logger.debug(f"LLM prompt: {messages}")
         # Get the response from the language model
