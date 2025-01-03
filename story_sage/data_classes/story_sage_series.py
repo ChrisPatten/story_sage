@@ -17,6 +17,14 @@ class Book:
     book_metadata_name: str
     number_of_chapters: int
 
+    def to_json(self):
+        return {
+            'number_in_series': self.number_in_series,
+            'title': self.title,
+            'book_metadata_name': self.book_metadata_name,
+            'number_of_chapters': self.number_of_chapters
+        }
+
 @dataclass
 class EntitySettings:
     """
@@ -70,3 +78,17 @@ class StorySageSeries:
             entity_settings=entity_settings,
             books=books
         )
+    
+    def to_metadata_json(self) -> dict:
+        """
+        Converts the series to a metadata JSON dictionary.
+
+        Returns:
+            dict: A dictionary representation of the series metadata.
+        """
+        return {
+            'series_id': self.series_id,
+            'series_name': self.series_name,
+            'series_metadata_name': self.series_metadata_name,
+            'books': [book.to_json() for book in self.books]
+        }

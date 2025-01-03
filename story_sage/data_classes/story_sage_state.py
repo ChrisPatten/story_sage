@@ -1,4 +1,5 @@
 from typing import List, TypedDict, Literal
+from ..story_sage_conversation import StorySageConversation
 
 class StorySageState(TypedDict):
     """
@@ -31,3 +32,6 @@ class StorySageState(TypedDict):
 
     order_by: Literal['earliest', 'most_recent']
     """Determines whether chunks should be returned starting with earliest or most recent."""
+
+    conversation: StorySageConversation
+    """The conversation object associated with the current state."""

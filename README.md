@@ -70,7 +70,9 @@ Story Sage uses a modular architecture with Retrieval-Augmented Generation (RAG)
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.11.4
+- pyenv
+- Redis
 - [ChromaDB](https://www.chromadb.com/docs/)
 - [Sentence Transformers](https://www.sbert.net/)
 - [LangChain](https://langchain.com/)
@@ -83,69 +85,73 @@ Story Sage uses a modular architecture with Retrieval-Augmented Generation (RAG)
    cd story_sage
    ```
 
-2. **Create a Virtual Environment**
+2. **Run Setup**
    ```bash
-   python3 -m venv venv
-   source venv/bin/activate
+   make setup
+   ```
+   This will:
+   - Install pyenv if needed
+   - Set up Python 3.11.4
+   - Create virtual environment
+   - Install Redis if needed
+   - Create default configuration files
+
+3. **Configure the Application**
+   Update the following configuration files:
+   - `config.yml`: Set your OpenAI API key and other settings
+   - `redis_config.conf`: Configure Redis settings if needed
+   
+   Example config.yml:
+   ```yaml
+   OPENAI_API_KEY: "your-api-key"
+   CHROMA_PATH: './chroma_data'
+   CHROMA_COLLECTION: 'story_sage'
+   ENTITIES_PATH: './entities/entities.json'
+   SERIES_PATH: './series_prod.yml'
+   N_CHUNKS: 15
+   REDIS_URL: 'redis://localhost:6379/0'
+   REDIS_EXPIRE: 86400
    ```
 
-3. **Install Dependencies**
+## Running the Application
+
+1. **Start Redis**
    ```bash
-   pip install -r requirements.txt
+   make redis
    ```
 
-4. **Configure ChromaDB**
-   Ensure ChromaDB is installed and running. Configure the `chroma_path` and `chroma_collection_name` in the configuration files as needed.
-
-5. **Prepare Series Data**
-   Populate the `series.yml` file with your book series information.
-
-6. **Embed in ChromaDB**
-   Embed your book series data into ChromaDB.
+2. **Run the Application**
+   ```bash
+   make app
+   ```
 
 ## Preparing Book Data
 
 ### Series Configuration
 
-The series.yml file is used to configure the book series data for Story Sage. Each series is defined with a unique series_id, series_name, and series_metadata_name. Each series contains a list of books, where each book has its own metadata.
-
-#### Example Series Configuration
+Create a `series_prod.yml` file to configure your book series. Example structure:
 
 ```yaml
 - series_id: 2
-  series_name: 'Harry Potter'
-  series_metadata_name: 'harry_potter'
+  series_name: 'Series Name'
+  series_metadata_name: 'series_name'
   entity_settings:
     names_to_skip:
-      - 'light'
+      - 'common_word'
     person_titles:
-      - 'miss'
-      - 'professor'
+      - 'title1'
+      - 'title2'
+    base_characters:
+      - name: 'Character Name'
+        other_names:
+          - 'alias1'
+          - 'alias2'
   books:
     - number_in_series: 1
-      title: "Harry Potter and the Sorcerer's Stone"
-      book_metadata_name: '01_the_sourcerers_stone'
+      title: 'Book Title'
+      book_metadata_name: '01_book_name'
       number_of_chapters: 17
-    - number_in_series: 2
-      title: 'Harry Potter and the Chamber of Secrets'
-      book_metadata_name: '02_the_chamber_of_secrets'
-      number_of_chapters: 18
-    # Additional books...
 ```
-
-#### Keys
-
-- `series_id`: A unique identifier for the series. This should be an integer.
-- `series_name`: The name of the book series.
-- `series_metadata_name`: A metadata-friendly name for the series, typically in lowercase and with underscores instead of spaces.
-- `entity_settings`: Settings for entity extraction. This section contains the following keys:
-  - `names_to_skip`: A list of names to skip during entity extraction.
-  - `person_titles`: A list of person titles to consider during entity extraction.
-- `books`: A list of books in the series. Each book has the following keys:
-- `number_in_series`: The position of the book in the series.
-- `title`: The title of the book.
-- `book_metadata_name`: A metadata-friendly name for the book, typically in lowercase and with underscores instead of spaces.
-- `number_of_chapters`: The total number of chapters in the book.
 
 ### Book File Preparation
 

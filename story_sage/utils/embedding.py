@@ -38,6 +38,7 @@ import yaml
 import json
 import argparse
 from story_sage.story_sage_entity import StorySageEntityCollection
+from story_sage.data_classes.story_sage_config import StorySageConfig
 
 def load_chunk_from_disk(file_path: str) -> List[Document]:
     """Loads text chunks from disk and creates Document objects.
@@ -280,30 +281,20 @@ if __name__ == '__main__':
     """
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description='Embedding Utility Script')
-    parser.add_argument('--series_list_path', type=str, default='series.yml',
-                        help='Path to the series.yml file (default: series.yml)')
-    parser.add_argument('--entities_path', type=str, default='entities.json',
-                        help='Path to the entities.json file (default: entities.json)')
     parser.add_argument('--config_path', type=str, default='config.yml',
                         help='Path to the config.yml file (default: config.yml)')
     parser.add_argument('--series_id', type=list[int], default=None,
                         help='Series ID to process (default: None)')
     args = parser.parse_args()
 
-    # Load the series list from the provided path
-    with open(args.series_list_path, 'r') as f:
-        series_list = yaml.safe_load(f)
-
-    # Load the entities from the provided path
-    with open(args.entities_path, 'r') as f:
-        entities = json.load(f)
-
     # Load the configuration from the provided path
     with open(args.config_path, 'r') as f:
         config = yaml.safe_load(f)
+    
+    STORY_SAGE_CONFIG = StorySageConfig.from_config(config)
 
     # Initialize the ChromaDB client with a persistent storage path
-    chroma_client = chromadb.PersistentClient(path=config['CHROMA_PATH'])
+    chroma_client = chromadb.PersistentClient(path=STORY_SAGE_CONFIG.chroma_path)
     embedder = Embedder()
 
     if args.series_id is not None:
@@ -313,14 +304,14 @@ if __name__ == '__main__':
 
     # Get or create a collection in the vector store
     vector_store = chroma_client.get_or_create_collection(
-        name=config['CHROMA_COLLECTION'],
+        name=STORY_SAGE_CONFIG.chroma_collection,
         embedding_function=embedder
     )
     print('Got vector store')
 
     # Iterate over subdirectories in ./chunks
     for series_id in series_to_process:
-        series_info = next((series for series in series_list if series['series_id'] == series_id), None)
+        series_info = next((series for series in STORY_SAGE_CONFIG.series if series['series_id'] == series_id), None)
         series_name = series_info['series_name']
         series_metadata_name = series_info['series_metadata_name']
         print(f'Processing series: {series_name} | {series_metadata_name} | {series_id}')

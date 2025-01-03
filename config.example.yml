@@ -3,3 +3,6 @@ CHROMA_PATH: './chroma_data'
 CHROMA_COLLECTION: 'story_sage'
 ENTITIES_PATH: './entities/entities.json'
 SERIES_PATH: './series.yml'
+N_CHUNKS: 15
+REDIS_URL: 'redis://localhost:6379/0'
+REDIS_EXPIRE: 86400
