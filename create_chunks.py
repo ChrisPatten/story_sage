@@ -42,7 +42,7 @@ SERIES_NAME = args.series_name
 
 
 
-file_path = f'./books/{SERIES_NAME}/*.txt'
+file_path = f'./books/{SERIES_NAME}/01_*.txt'
 
 """
 Text Chunking Utility
@@ -80,13 +80,13 @@ if __name__ == '__main__':
             full_text = ' '.join(chapter_text)
             chunks = chunker.process_file(
                 text=full_text,
-                context_window=2,
-                percentile_threshold=80,
-                min_chunk_size=4
+                context_window=4,
+                percentile_threshold=70,
+                min_chunk_size=100
             )
 
             if not os.path.exists(f'chunks/{SERIES_NAME}'):
                 os.makedirs(f'chunks/{SERIES_NAME}')
-            if not os.path.exists(f'chunks/{SERIES_NAME}/semantic_chunks'):
-                os.makedirs(f'chunks/{SERIES_NAME}/semantic_chunks')
-            json.dump(chunks, open(f'chunks/{SERIES_NAME}/semantic_chunks/{book_number}_{chapter_number}.json', 'w'))
+            if not os.path.exists(f'chunks/{SERIES_NAME}/bigger_chunks'):
+                os.makedirs(f'chunks/{SERIES_NAME}/bigger_chunks')
+            json.dump(chunks, open(f'chunks/{SERIES_NAME}/bigger_chunks/{book_number}_{chapter_number}.json', 'w'), indent=4)
