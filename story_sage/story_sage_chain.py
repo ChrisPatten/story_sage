@@ -227,14 +227,7 @@ class StorySageChain(StateGraph):
             query_str=state['question'],
             context_filters=context_filters
         )
-
-        if not retrieved_docs:
-            self.logger.debug("No context retrieved. Rerun without character filters.")
-            context_filters['entities'] = []
-            retrieved_docs = self.retriever.retrieve_chunks(
-                query_str=state['question'],
-                context_filters=context_filters
-            )
+        
         # Format the retrieved context for the prompt
 
         documents = retrieved_docs['documents'][0]
