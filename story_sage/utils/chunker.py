@@ -116,6 +116,7 @@ class StorySageChunker:
                             book_info['chapters'][chapter_number] = []
                     if re.match(r'GLOSSARY', line, re.IGNORECASE):
                         break
+                    line = re.sub(chapter_pattern, '', line)
                     book_info['chapters'][chapter_number].append(line)
                 text_dict[fname] = book_info
                 print(f'Book {book_number} has {len(book_info["chapters"])} chapters (0 indexed to include prologue).')
