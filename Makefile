@@ -69,3 +69,11 @@ setup:
 		cp config.example.yml config.yml; \
 	fi
 	@echo "Setup complete. Update config.yml as necessary and ensure a series.yml file is present in the root directory"
+
+test:
+	@echo "Running tests"
+	@eval "$$(pyenv init -)" && \
+	eval "$$(pyenv virtualenv-init -)" && \
+	pyenv activate story_sage_env && \
+	python3 tests/quality_test.py
+
