@@ -375,8 +375,11 @@ class StorySageChain(StateGraph):
         print_state('get_context', state)
 
         results = self.retriever.retrieve_chunks(query_str=state['question'], context_filters=state['context_filters'])
-        
-        docs_with_metadata = zip(results['docs'][0], results['metadatas'][0])
+        try:
+            docs_with_metadata = zip(results['docs'][0], results['metadatas'][0])
+        except KeyError:
+            print(results)
+            raise
 
         # Sort the results by book_number and chapter_number
         sorted_results = sorted(

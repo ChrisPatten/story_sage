@@ -55,6 +55,18 @@ class StorySageConfig:
             ]
         """
         return [series.to_metadata_json() for series in self.series]
+    
+    def get_series_by_meta_name(self, series_metadata_name: str) -> StorySageSeries:
+        """
+        Retrieves a StorySageSeries object based on the series_metadata_name provided.
+
+        Returns:
+            StorySageSeries: A StorySageSeries object.
+        
+        Example:
+            series = ssconfig.get_series_by_meta_name('sherlock_holmes')
+        """
+        return next((series for series in self.series if series.series_metadata_name == series_metadata_name), None)
 
     @classmethod
     def from_config(cls, config: dict) -> 'StorySageConfig':

@@ -33,6 +33,10 @@ def load_config(config_path):
     return config
 
 config = StorySageConfig.from_config(load_config('config.yml'))
+CHROMA_PATH = config.chroma_path
+CHROMA_COLLECTION = config.chroma_collection
+
+series_info = config.get_series_by_meta_name(SERIES_NAME)
 
 print('Config loaded')
 
@@ -166,18 +170,25 @@ if not SKIP_CHUNKING:
                 json.dump(summary, open(f'chunks/{SERIES_NAME}/summaries/{book_number}_{chapter_number}.json', 'w'), indent=4)
 
         summaries.extend(book_summaries)
-    
-    with open(f'chunks/{SERIES_NAME}/summaries/summaries_{"-".join(BOOK_NUMBERS)}.pkl', 'wb') as f:
-        pickle.dump(summaries, f)
 else:
     print('Skipping chunking')
-    with open(f'chunks/{SERIES_NAME}/summaries/summaries_1-2-3-4-5-6-7.pkl', 'rb') as f:
-        summaries = pickle.load(f)
+    glob_expression = f'chunks/{SERIES_NAME}/summaries/[{",".join(BOOK_NUMBERS)}]_*.json'
+    
+    summaries = []
+    for file in glob(glob_expression):
+        filename = os.path.splitext(os.path.basename(file))[0]
+        book_number, chapter_number = filename.split('_')
+        for chunk_idx, summary in enumerate(json.load(open(file, 'r'))):
+            try:
+                summaries.append((book_number, chapter_number, chunk_idx, summary))
+            except KeyError:
+                print(summary)
+                raise
 
 print('Getting Chroma client')
-chroma_client = chromadb.PersistentClient(config.chroma_path)
+chroma_client = chromadb.PersistentClient(CHROMA_PATH)
 embedder = Embedder()
-collection = chroma_client.get_or_create_collection('summarized_chunks', embedding_function=embedder)
+collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION, embedding_function=embedder)
 
 ids = []
 docs = []
@@ -186,9 +197,9 @@ meta = []
 print('Processing summaries to add to collection')
 for summary in summaries:
     book_number, chapter_number, chunk_index, summary_obj = summary
-    book_number = str(book_number)
-    chapter_number = str(chapter_number)
-    chunk_index = str(chunk_index)
+    book_number = int(book_number)
+    chapter_number = int(chapter_number)
+    chunk_index = int(chunk_index)
     metadatas = {
         'characters': json.dumps(summary_obj['characters']),
         'locations': json.dumps(summary_obj['locations']),
@@ -198,7 +209,8 @@ for summary in summaries:
         'book_number': book_number,
         'chapter_number': chapter_number,
         'chunk_index': chunk_index,
-        'series_metadata_name': SERIES_NAME
+        'series_metadata_name': SERIES_NAME,
+        'series_id': series_info.series_id
     }
     ids.append(f'{SERIES_NAME}_{book_number}_{chapter_number}_{chunk_index}')
     docs.append(summary_obj['summary'])
@@ -210,6 +222,7 @@ for i in tqdm(range(0, len(ids), batch_size), desc='Adding to collection'):
     batch_ids = ids[i:i + batch_size]
     batch_docs = docs[i:i + batch_size]
     batch_meta = meta[i:i + batch_size]
+    #collection.delete(ids=batch_ids)
     collection.add(ids=batch_ids, documents=batch_docs, metadatas=batch_meta)
 
 print(f'Added {len(ids)} documents to collection')
