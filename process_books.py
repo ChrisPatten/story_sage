@@ -171,14 +171,12 @@ if not SKIP_CHUNKING:
         pickle.dump(summaries, f)
 else:
     print('Skipping chunking')
-    with open(f'chunks/{SERIES_NAME}/summaries/summaries_{"-".join(BOOK_NUMBERS)}.pkl', 'rb') as f:
+    with open(f'chunks/{SERIES_NAME}/summaries/summaries_1-2-3-4-5-6-7.pkl', 'rb') as f:
         summaries = pickle.load(f)
 
 print('Getting Chroma client')
 chroma_client = chromadb.PersistentClient(config.chroma_path)
-print('Getting embedder')
 embedder = Embedder()
-print('Getting collection')
 collection = chroma_client.get_or_create_collection('summarized_chunks', embedding_function=embedder)
 
 ids = []
