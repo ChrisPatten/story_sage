@@ -2,7 +2,7 @@
 import logging  # For logging debug information
 from typing import List  # For type annotations
 import chromadb  # ChromaDB client for vector storage and retrieval
-from chromadb import Documents, EmbeddingFunction, Embeddings
+from chromadb import Documents, EmbeddingFunction, Embeddings, GetResult
 import logging
 from sentence_transformers import SentenceTransformer
 import torch
@@ -42,7 +42,7 @@ class StorySageEmbedder(EmbeddingFunction):
         # Set up logging for debugging purposes
         self.logger = logging.getLogger(__name__)
         # Initialize the SentenceTransformer model
-        self.model = SentenceTransformer(model_name)
+        self.model = SentenceTransformer(model_name, local_files_only=True)
         # Determine the device to run the model on (GPU if available, else CPU)
         self.device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
         # Move the model to the selected device
@@ -146,47 +146,8 @@ class StorySageRetriever:
         # Log the incoming query and filters for debugging
         self.logger.debug(f"Retrieving chunks with query: {query_str}, context_filters: {context_filters}")
 
-        combined_filter = {'series_id': int(context_filters.get('series_id'))}  # Initialize the combined filter dictionary
-
-        # Extract book and chapter numbers, if present
-        book_number = context_filters.get('book_number')
-        chapter_number = context_filters.get('chapter_number')
-
-        # Build a filter to retrieve documents from earlier books or chapters
-        book_chapter_filter = {
-            '$or': [
-                {'book_number': {'$lt': book_number}},  # Books before the current one
-                {'$and': [  # Chapters before the current one in the same book
-                    {'book_number': book_number},
-                    {'chapter_number': {'$lt': chapter_number}}
-                ]}
-            ]
-        }
-
-        # Combine filters for book and chapter
-        combined_filter = {'$and': [combined_filter, book_chapter_filter]}
-
-        # Create a fallback filter if we need to requery without tags
-        fallback_filter = combined_filter.copy()
-
-        # Build filters based on entities like people, places, groups, and animals
-        entity_filters = []
-        if len(context_filters.get('entities', [])) > 0:
-            for entity_id in context_filters['entities']:
-                entity_filter = {entity_id: True}
-                entity_filters.append(entity_filter)
-
-        # Combine entity filters if any exist
-        if len(entity_filters) == 1:
-            entity_meta_filter = entity_filters[0]
-        elif len(entity_filters) == 0:
-            pass
-        else:
-            # Use an '$and' clause to require all entity conditions
-            entity_meta_filter = {'$and': entity_filters}
-            # Add entity filters to the combined filter
-            combined_filter = {'$and': [combined_filter, entity_meta_filter]} if combined_filter else entity_meta_filter
-
+        combined_filter = self.get_where_filter(context_filters)
+        fallback_filter = self.get_where_filter(context_filters, include_entities=False)
         # Log the combined filter being used for the query
         self.logger.debug(f"Combined filter: {combined_filter}")
 
@@ -214,3 +175,75 @@ class StorySageRetriever:
         self.logger.debug(f"Retrieved documents: {query_result}")
         # Return the query results
         return query_result
+    
+    def get_where_filter(self, context_filters: dict, include_entities: bool = True) -> dict:
+        combined_filter = {'series_id': int(context_filters.get('series_id'))}  # Initialize the combined filter dictionary
+
+        # Extract book and chapter numbers, if present
+        book_number = context_filters.get('book_number')
+        chapter_number = context_filters.get('chapter_number')
+
+        # Build a filter to retrieve documents from earlier books or chapters
+        book_chapter_filter = {
+            '$or': [
+                {'book_number': {'$lt': book_number}},  # Books before the current one
+                {'$and': [  # Chapters before the current one in the same book
+                    {'book_number': book_number},
+                    {'chapter_number': {'$lt': chapter_number}}
+                ]}
+            ]
+        }
+
+        # Combine filters for book and chapter
+        combined_filter = {'$and': [combined_filter, book_chapter_filter]}
+
+        # Build filters based on entities like people, places, groups, and animals
+        entity_filters = []
+        if len(context_filters.get('entities', [])) > 0:
+            for entity_id in context_filters['entities']:
+                entity_filter = {entity_id: True}
+                entity_filters.append(entity_filter)
+
+        # Combine entity filters if any exist
+        if not include_entities:
+            entity_filters = []
+
+        if len(entity_filters) == 1:
+            entity_meta_filter = entity_filters[0]
+        elif len(entity_filters) == 0:
+            pass
+        else:
+            # Use an '$and' clause to require all entity conditions
+            entity_meta_filter = {'$and': entity_filters}
+            # Add entity filters to the combined filter
+            combined_filter = {'$and': [combined_filter, entity_meta_filter]} if combined_filter else entity_meta_filter
+
+        return combined_filter
+
+    def first_pass_query(self, query_str: str, context_filters: dict) -> dict[str, str]:
+        """
+        Performs a larger initial query and returns both the result object and
+        a dictionary of {id: document}.
+        """
+        where_filter = self.get_where_filter(context_filters, include_entities=False)
+
+        results = self.vector_store.query(
+            query_texts=[query_str],
+            n_results=50,
+            include=['metadatas', 'documents'],
+            where=where_filter
+        )
+        if len(results['ids']) == 0:
+            return {}
+        for metadata in results['metadatas'][0]:
+            if 'full_chunk' in metadata:
+                del metadata['full_chunk']
+        doc_dict = {id: doc for id, doc in zip(results['ids'][0], results['documents'][0])}
+        return doc_dict
+    
+    def get_by_ids(self, ids: List[str]) -> GetResult:
+        """
+        Retrieves documents from the vector store by their IDs.
+        """
+        results = self.vector_store.get(ids=ids, include=['metadatas'])
+        return results

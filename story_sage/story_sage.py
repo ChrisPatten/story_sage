@@ -48,7 +48,7 @@ class StorySage:
             request_id: "123e4567-e89b-12d3-a456-426614174000"
     """
 
-    def __init__(self, config: StorySageConfig):
+    def __init__(self, config: StorySageConfig, log_level: int = logging.INFO):
         """Initializes the StorySage instance.
 
         Args:
@@ -61,13 +61,9 @@ class StorySage:
         """
         # Set up logging
         self._logger = logging.getLogger(__name__)
-        self._logger.setLevel(logging.DEBUG)
-        self._logger.propagate = True  # Allow logs to root logger
-        handler = logging.StreamHandler()
-        handler.setLevel(logging.DEBUG)
         formatter = ConditionalRequestIDFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        self._logger.addHandler(handler)
+        self._logger.addHandler(logging.StreamHandler().setFormatter(formatter))
+        self._logger.setLevel(log_level)
 
         # Initialize request_id
         self.request_id = None
@@ -117,7 +113,9 @@ class StorySage:
             answer=None,
             entities=[],
             order_by='most_recent',
-            conversation=conversation
+            conversation=conversation,
+            node_history=['START'],
+            tokens_used=0
         )
 
         try:

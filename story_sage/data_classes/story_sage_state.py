@@ -12,6 +12,18 @@ class StorySageState(TypedDict):
     question: str
     """The user's question."""
 
+    context_filters: dict
+    """A dictionary of context filters to apply to the queries context."""
+
+    initial_context: List[str]
+    """The initial larger list of chunk summaries retrieved based on the question and filters."""
+
+    target_ids: List[str]
+    """The refined list of chunk IDs to return based on evaluating the initial context."""
+
+    secondary_query: str
+    """A refined query generated based on the initial_context to get better results."""
+
     context: List[str]
     """A list of context strings retrieved based on the question and filters."""
 
@@ -35,3 +47,9 @@ class StorySageState(TypedDict):
 
     conversation: StorySageConversation
     """The conversation object associated with the current state."""
+
+    node_history: List[str]
+    """A list of node IDs representing the path taken through the graph."""
+
+    tokens_used: int
+    """The number of tokens used in processing."""
