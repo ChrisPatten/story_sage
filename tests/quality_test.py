@@ -28,6 +28,8 @@ try:
 except Exception as e:
     raise e
 
+test_config = test_config[1]
+
 # Initialize StorySage instance with configuration settings
 story_sage = StorySage(
     config=STORY_SAGE_CONFIG,
@@ -47,7 +49,7 @@ logger.addHandler(file_handler)
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.WARNING)
 console_handler.setFormatter(formatter)
-logger.addHandler(console_handler)
+#logger.addHandler(console_handler)
 
 def get_answer(question, series_id, book_number, chapter_number):
     """
@@ -163,3 +165,5 @@ for question in tqdm(question_list, desc='Getting responses to questions'):
 # Write the results to an HTML file
 with open(results_path, 'w') as file:
     file.write(get_html_results(results))
+
+exit(0)
