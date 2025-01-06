@@ -2,15 +2,30 @@
 import logging
 from langgraph.graph import START, END, StateGraph
 from langchain_openai import ChatOpenAI
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from .data_classes.story_sage_state import StorySageState
 from .vector_store import StorySageRetriever
 from .story_sage_stepback import StorySageStepback
 from .story_sage_entity import StorySageEntityCollection, StorySageEntity
 from .data_classes.story_sage_series import StorySageSeries
 import httpx
-from typing import Optional, List
+from typing import Optional, List, Literal
 import spacy
+from pydantic import BaseModel
+from openai import OpenAI
+
+# These are helpers for development and should both be False before committing
+PRINT_STATE = False
+LOG_STATE = False
+
+def print_state(step_name: str, state: StorySageState):
+    if PRINT_STATE:
+        print(f'Step: {step_name}')
+        print(f'State: {state}')
+        print('🥦' * 20)
+    if LOG_STATE:
+        logging.debug(f'Step: {step_name}')
+        logging.debug(f'State: {state}')
 
 class StorySageChain(StateGraph):
     """Defines a chain of operations for the Story Sage system.
@@ -46,8 +61,9 @@ class StorySageChain(StateGraph):
     """
 
     def __init__(self, api_key: str, entities: dict[str, StorySageEntityCollection], 
-                 series_list: List[StorySageSeries], retriever: StorySageRetriever, 
-                 logger: Optional[logging.Logger] = None):
+                 series_list: List[StorySageSeries], retriever: StorySageRetriever,
+                 prompts: dict[str, list[dict[str, str]]],
+                 log_level: int = logging.INFO):
         """Initializes a StorySageChain instance.
 
         Args:
@@ -90,56 +106,48 @@ class StorySageChain(StateGraph):
         # Load the spaCy NLP model
         self.nlp = spacy.load("en_core_web_sm")
 
+        self.prompts = prompts
+
         # Initialize the Stepback module to optimize queries
         self.stepback = StorySageStepback(api_key=api_key)
         # Set up the OpenAI language model with the provided API key
         self.llm = ChatOpenAI(api_key=api_key, model='gpt-4o-mini', http_client=httpx.Client(verify=False))
         # Define the prompt template for generating responses
-        self.prompt = PromptTemplate(
-            input_variables=['question', 'context', 'book_number', 'chapter_number', 'conversation'],
-            template="""
-                HUMAN
+        generate_messages_list = [(role, message) for item in self.prompts['generate_prompt'] for role, message in item.items()]
 
-                You are an assistant to help a reader keep track of people, places, and plot points in books.
-                The attached pieces of retrieved context are excerpts from the books related to the reader's question. Use them to generate your response.
+        self.generate_prompt = ChatPromptTemplate(messages=generate_messages_list, input_variables=['question', 'context'])
 
-                Guidelines for the response:
-                * If you don't know the answer or aren't sure, just say that you don't know. 
-                * Don't provide any irrelevant information. Most importantly: DO NOT PROVIDE INFORMATION FROM OUTSIDE THE CONTEXT.
-                * Use bullet points to provide excerpts from the context that support your answer. Reference the book and chapter whenever you include an excerpt.
-                * If there is no context, you can say that you don't have enough information to answer the question.
+        # Set up the OpenAI Client to be able to use other APIs besides LangChain
+        self.client = OpenAI(api_key=api_key, http_client=httpx.Client(verify=False))
 
-                The reader is currently in Book {book_number}, Chapter {chapter_number}. Don't limit your responses to just this book. Answer the reader's question
-                taking into account all the context provided.
-
-                ---------------------
-                Question: {question} 
-                ---------------------
-                Previous Conversation: {conversation}
-                ---------------------
-                Context: {context} 
-                ---------------------
-                Answer:
-            """
-        )
-        # Initialize the logger
-        if logger:
-            self.logger = logger
-            self.logger.debug('Logger initialized from parent.')
-        else:
-            self.logger = logging.getLogger(__name__)
-            self.logger.debug('Logger initialized locally.')
+        self.logger = logging.getLogger(__name__)
+        self.logger.level = log_level
 
         # Build the state graph for the chain's workflow
         graph_builder = StateGraph(StorySageState)
         graph_builder.add_node("RouterFunction", self.router_function)
         graph_builder.add_node("GetCharacters", self.get_characters)
+        graph_builder.add_node("GetContextFilters", self.get_context_filters)
+        graph_builder.add_node("GetInitialContext", self.get_initial_context)
+        graph_builder.add_node("IdentifyRelevantChunks", self.identify_relevant_chunks)
+        graph_builder.add_node("GetContextByIDs", self.get_context_by_ids)
         graph_builder.add_node("GetContext", self.get_context)
         graph_builder.add_node("Generate", self.generate)
         # Define the sequence of operations
         graph_builder.add_edge(START, "RouterFunction")
         graph_builder.add_edge("RouterFunction", "GetCharacters")
-        graph_builder.add_edge("GetCharacters", "GetContext")
+        graph_builder.add_edge("GetCharacters", "GetContextFilters")
+        graph_builder.add_edge("GetContextFilters", "GetInitialContext")
+        graph_builder.add_edge("GetInitialContext", "IdentifyRelevantChunks")
+        graph_builder.add_conditional_edges(
+            "IdentifyRelevantChunks", 
+            self.check_for_target_ids,
+            {
+                'by_id': "GetContextByIDs",
+                'full_search': "GetContext"
+            }
+        )
+        graph_builder.add_edge("GetContextByIDs", "Generate")
         graph_builder.add_edge("GetContext", "Generate")
         graph_builder.add_edge("Generate", END)
         # Compile the graph
@@ -164,6 +172,7 @@ class StorySageChain(StateGraph):
             If certain entity names appear in the user's question, they will be
             mapped to their respective entity_group_id values.
         """
+        print_state('get_characters', state)
         self.logger.debug("Extracting characters from question.")
         # Initialize sets to collect entities
         entities_in_question = set()
@@ -187,10 +196,112 @@ class StorySageChain(StateGraph):
                         entities_in_question.add(entity.entity_group_id)
                 self.logger.debug(f'Found entities: {entities_in_question}')
         # Return the entities as lists
+        new_node_history = state['node_history'].append('GetCharacters') if state['node_history'] else ['GetCharacters']
         return {
             'entities': list(entities_in_question),
+            'node_history': new_node_history
+        }
+    
+    def get_initial_context(self, state: StorySageState) -> dict:
+        """Retrieves the initial context based on the user's question and entities.
+
+        This method queries the document store based on the question and entities
+        to retrieve relevant text chunks for further processing.
+
+        Args:
+            state (StorySageState): The current state containing the user's question and entity IDs.
+
+        Returns:
+            dict: A dictionary containing the 'initial_context' field with a list of relevant text excerpts.
+
+        Example:
+            >>> state = StorySageState(question="Where does John meet Sarah?", entities=["<group_id_1>", "<group_id_2>"])
+            >>> context_data = chain_instance.get_initial_context(state)
+            >>> print(context_data['initial_context'])
+            ['Book 2, Chapter 5: John travels to the docks...', ...]
+
+        Example Results:
+            Returns selected text chunks that match the provided entities and can
+            be used to generate a final answer.
+        """
+        print_state('get_initial_context', state)
+        self.logger.debug("Retrieving initial context based on the question and entities.")
+        # Query the document store for relevant text chunks
+        doc_dict = self.retriever.first_pass_query(
+            query_str=state['question'],
+            context_filters=state['context_filters']
+        )
+
+        new_node_history = state['node_history'].append('GetInitialContext') if state['node_history'] else ['GetInitialContext']
+        return { 
+            'initial_context': doc_dict,
+            'node_history': new_node_history
         }
   
+    def identify_relevant_chunks(self, state: StorySageState) -> dict:
+        """
+        A placeholder for the chunk relevance logic, returning a class
+        with a 'chunk_ids' attribute for filtering.
+        """
+        print_state('identify_relevant_chunks', state)
+        if 'initial_context' not in state or len(state['initial_context']) < 1:
+            return { 'target_ids': [], 'secondary_query': None }
+        class RelevantChunks(BaseModel):
+            chunk_ids: list[str]
+            secondary_query: str
+        
+        summaries = "\n".join([f"- {id}: {doc}" for id, doc in state['initial_context'].items()])
+        conversation_steps = [{'role': role, 'content': message.format(summaries=summaries, question=state['question'])} for step in self.prompts['relevant_chunks_prompt'] for role, message in step.items()]
+        chat_completion = self.client.beta.chat.completions.parse(
+            messages=conversation_steps,
+            model="gpt-4o-mini",
+            response_format=RelevantChunks
+        )
+        result = chat_completion.choices[0].message.parsed
+        new_node_history = state['node_history'].append('IdentifyRelevantChunks') if state['node_history'] else ['IdentifyRelevantChunks']
+        return { 
+            'target_ids': result.chunk_ids, 
+            'secondary_query': result.secondary_query,
+            'tokens_used': state['tokens_used'] + chat_completion.usage.total_tokens,
+            'node_history': new_node_history
+        }
+
+    def get_context_filters(self, state: StorySageState) -> dict:
+        # Set up filters for context retrieval
+        print_state(f"get_context_filters", state)
+        new_node_history = state['node_history'].append('GetContextFilters') if state['node_history'] else ['GetContextFilters']
+        return { 
+            'context_filters' : {
+                'entities': state['entities'],
+                'series_id': state['series_id'],
+                'book_number': state['book_number'],
+                'chapter_number': state['chapter_number']
+            },
+            'node_history': new_node_history
+        }
+        
+    def get_context_by_ids(self, state: StorySageState) -> dict:
+        print_state(f"get_context_by_ids", state)
+
+        results = self.retriever.get_by_ids(state['target_ids'])
+        
+        # Sort the results by book_number and chapter_number
+        sorted_results = sorted(
+            results['metadatas'],
+            key=lambda x: (x['book_number'], x['chapter_number'])
+        )
+
+        context = [ 
+            f"\"\"\"\nBook {m['book_number']}, Chapter {m['chapter_number']}: {m['full_chunk']}" for m in sorted_results
+        ]
+        
+        new_node_history = state['node_history'].append('GetContextByIds') if state['node_history'] else ['GetContextByIds']
+
+        return {
+            'context': context,
+            'node_history': new_node_history
+        }
+
     def get_context(self, state: StorySageState) -> dict:
         """Retrieves relevant contextual excerpts for the user's question.
 
@@ -213,39 +324,32 @@ class StorySageChain(StateGraph):
             Returns selected text chunks that match the provided filters and can
             be used to generate a final answer.
         """
-        self.logger.debug("Retrieving context based on the question and entities.")
-        # Set up filters for context retrieval
-        context_filters = {
-            'entities': state['entities'],
-            'series_id': state['series_id'],
-            'book_number': state['book_number'],
-            'chapter_number': state['chapter_number']
-        }
-        # Retrieve chunks of context based on the query and filters
-        self.logger.debug(f"order by: {state['order_by']}")
-        retrieved_docs = self.retriever.retrieve_chunks(
-            query_str=state['question'],
-            context_filters=context_filters
+        print_state('get_context', state)
+
+        results = self.retriever.retrieve_chunks(query_str=state['question'], context_filters=state['context_filters'])
+        try:
+            docs_with_metadata = zip(results['documents'][0], results['metadatas'][0])
+        except KeyError:
+            print('🔥' * 20)
+            print(results)
+            print('🔥' * 20)
+            raise
+
+        # Sort the results by book_number and chapter_number
+        sorted_results = sorted(
+           docs_with_metadata,
+            key=lambda x: (x[1]['book_number'], x[1]['chapter_number'])
         )
 
-        if not retrieved_docs:
-            self.logger.debug("No context retrieved. Rerun without character filters.")
-            context_filters['entities'] = []
-            retrieved_docs = self.retriever.retrieve_chunks(
-                query_str=state['question'],
-                context_filters=context_filters
-            )
-        # Format the retrieved context for the prompt
-
-        documents = retrieved_docs['documents'][0]
-        metadatas = retrieved_docs['metadatas'][0]
-
-        context = [
-            f"Book {metadata['book_number']}, Chapter {metadata['chapter_number']}: {document}"
-            for document, metadata in zip(documents, metadatas)
+        context = [ 
+            f"\"\"\"\nBook {m[1]['book_number']}, Chapter {m[1]['chapter_number']}: {m[0]}" for m in sorted_results
         ]
-        # Return the context
-        return {'context': context}
+
+        new_node_history = state['node_history'].append('GetContext') if state['node_history'] else ['GetContext']
+        return {
+            'context': context,
+            'node_history': new_node_history
+        }
   
     def generate(self, state: StorySageState) -> dict:
         """Generates the final answer using the language model.
@@ -270,10 +374,11 @@ class StorySageChain(StateGraph):
             The final answer is typically a human-readable text that references
             the relevant context while adhering to the guidelines (no outside info).
         """
+        print_state(f"generate", state)
         # Combine context excerpts into a single string
-        docs_content = '\n\n'.join(state['context'])
+        docs_content = '\n'.join(state['context']) + '\n\"\"\"'
         # Invoke the prompt with the question and context
-        messages = self.prompt.invoke(
+        messages = self.generate_prompt.invoke(
             {'question': state['question'], 'context': docs_content, 
              'book_number': state['book_number'], 'chapter_number': state['chapter_number'],
              'conversation': state['conversation']}
@@ -281,10 +386,16 @@ class StorySageChain(StateGraph):
         self.logger.debug(f"LLM prompt: {messages}")
         # Get the response from the language model
         response = self.llm.invoke(messages)
-        # Return the generated answer
-        return {'answer': response.content}
 
-    def router_function(self, state: StorySageState) -> StorySageState:
+        # Return the generated answer
+
+        new_node_history = state['node_history'].append('Generate') if state['node_history'] else ['Generate']
+        return {
+            'answer': response.content,
+            'node_history': new_node_history
+        }
+
+    def router_function(self, state: StorySageState) -> dict:
         """
         Router function to determine if the question is about the past or the present
         and set the order_by property accordingly.
@@ -310,5 +421,23 @@ class StorySageChain(StateGraph):
                 break
 
         # Set the order_by property based on the detected tense
-        state['order_by'] = tense
-        return state
+        new_node_history = state['node_history'].append('RouterFunction') if state['node_history'] else ['RouterFunction']
+        return { 
+            'order_by': tense,
+            'node_history': new_node_history
+        }
+    
+    def check_for_target_ids(self, state: StorySageState) -> Literal['by_id', 'full_search']:
+        """
+        Check if the state contains target_ids for chunk filtering.
+
+        Args:
+            state (StorySageState): The current state of the system.
+
+        Returns:
+            bool: True if target_ids are present, False otherwise.
+        """
+        if ('target_ids' in state and len(state['target_ids']) > 0):
+            return 'by_id'
+        else:
+            return 'full_search'  

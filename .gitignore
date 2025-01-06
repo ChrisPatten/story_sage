@@ -15,6 +15,7 @@ __pycache__/
 config.yml
 series*.yml
 redis_config.conf
+prompts.yml
 
 # Data files
 *.faiss
@@ -26,7 +27,7 @@ chroma_data/
 booknlp/output/
 
 # Log files
-logs/*.log*
+*.log*
 
 # JSON files
 *.json
@@ -41,3 +42,4 @@ node_modules/
 !requirements.txt
 !series.example.yml
 !entity_editor/*.json
+!prompts.example.yml
