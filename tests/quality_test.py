@@ -28,16 +28,15 @@ try:
 except Exception as e:
     raise e
 
-test_config = test_config[1]
+test_config = test_config[0]
 
 # Initialize StorySage instance with configuration settings
 story_sage = StorySage(
     config=STORY_SAGE_CONFIG,
-    log_level=logging.WARNING
+    log_level=logging.DEBUG
 )
 
 logger = logging.getLogger("story_sage")
-logger.setLevel(logging.DEBUG)
 
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
@@ -47,7 +46,7 @@ file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.WARNING)
+console_handler.setLevel(logging.DEBUG)
 console_handler.setFormatter(formatter)
 #logger.addHandler(console_handler)
 
