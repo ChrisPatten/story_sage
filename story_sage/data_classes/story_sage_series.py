@@ -1,3 +1,43 @@
+"""Module for managing book series and their metadata in the StorySage application.
+
+This module provides data classes for representing books, series, and collections of series,
+along with functionality for JSON serialization and deserialization.
+
+Example:
+    Creating and using a StorySageSeries:
+    
+    >>> book = Book(
+    ...     number_in_series=1,
+    ...     title="The First Book",
+    ...     book_metadata_name="first_book",
+    ...     number_of_chapters=10
+    ... )
+    >>> entity_settings = EntitySettings(
+    ...     names_to_skip=["Mr.", "Mrs."],
+    ...     person_titles=["King", "Queen"]
+    ... )
+    >>> series = StorySageSeries(
+    ...     series_id=1,
+    ...     series_name="Amazing Series",
+    ...     series_metadata_name="amazing_series",
+    ...     entity_settings=entity_settings,
+    ...     books=[book]
+    ... )
+    >>> metadata = series.to_metadata_json()
+    >>> # Result:
+    >>> # {
+    >>> #     'series_id': 1,
+    >>> #     'series_name': 'Amazing Series',
+    >>> #     'series_metadata_name': 'amazing_series',
+    >>> #     'books': [{
+    >>> #         'number_in_series': 1,
+    >>> #         'title': 'The First Book',
+    >>> #         'book_metadata_name': 'first_book',
+    >>> #         'number_of_chapters': 10
+    >>> #     }]
+    >>> # }
+"""
+
 from dataclasses import dataclass
 from typing import List
 
@@ -18,6 +58,12 @@ class Book:
     number_of_chapters: int
 
     def to_json(self):
+        """
+        Converts the book to a JSON dictionary.
+
+        Returns:
+            dict: A dictionary representation of the book.
+        """
         return {
             'number_in_series': self.number_in_series,
             'title': self.title,

@@ -1,3 +1,29 @@
+"""
+Process books into semantic chunks for a story analysis system.
+
+This script processes text files containing book content into semantic chunks,
+generates summaries using GPT-4, and stores them in a vector database (ChromaDB).
+It handles multiple books in a series and manages the chunking, summarization,
+and storage of text segments.
+
+Example usage:
+    # Process books 1 and 2 from the "harry_potter" series
+    python process_books.py --series_name harry_potter --book_numbers 1 2
+
+    # Process all books in a series, skipping the chunking step
+    python process_books.py --series_name lord_of_rings --skip_chunking
+
+Example output structure:
+    chunks/
+        harry_potter/
+            bigger_chunks/
+                01_1.json  # Book 1, Chapter 1 chunks
+                01_2.json  # Book 1, Chapter 2 chunks
+            summaries/
+                01_1.json  # Book 1, Chapter 1 summaries
+                01_2.json  # Book 1, Chapter 2 summaries
+"""
+
 import os
 import json
 from story_sage.utils.chunker import StorySageChunker
@@ -28,6 +54,15 @@ BOOK_NUMBERS = args.book_numbers
 SKIP_CHUNKING = args.skip_chunking
 
 def load_config(config_path):
+    """
+    Load configuration from a YAML file.
+
+    Args:
+        config_path (str): Path to the YAML configuration file.
+
+    Returns:
+        dict: Parsed configuration dictionary.
+    """
     with open(config_path, 'r') as file:
         config = yaml.load(file, Loader=yaml.FullLoader)
     return config
@@ -55,10 +90,27 @@ if not SKIP_CHUNKING:
     print('OpenAI client created')
 
 class CharacterActions(BaseModel):
+    """
+    Data model for character actions in a text chunk.
+
+    Attributes:
+        character (str): Name of the character
+        actions (str): Description of the character's actions
+    """
     character: str
     actions: str
 
 class ChunkSummary(BaseModel):
+    """
+    Data model for storing chunk summaries and extracted information.
+
+    Attributes:
+        summary (str): Condensed summary of the text chunk
+        characters (list[CharacterActions]): List of character actions
+        locations (list[str]): List of locations mentioned
+        creatures (list[str]): List of creatures mentioned
+        objects (list[str]): List of significant objects mentioned
+    """
     summary: str
     characters: list[CharacterActions]
     locations: list[str]
@@ -66,7 +118,21 @@ class ChunkSummary(BaseModel):
     objects: list[str]
 
 def get_summary(text: str):
-    """Gets a summary of the text using GPT-4o"""
+    """
+    Generate a structured summary of text using GPT-4.
+
+    Uses OpenAI's GPT-4 to create a comprehensive summary including characters,
+    locations, creatures, and objects mentioned in the text.
+
+    Args:
+        text (str): The text chunk to summarize.
+
+    Returns:
+        tuple: Contains:
+            - str: Condensed summary
+            - ChunkSummary: Structured summary with extracted information
+            - dict: API usage statistics
+    """
     summary_len = round(len(text.split(' ')) / 5)
     if summary_len < 50:
         summary_len = 50
@@ -103,13 +169,22 @@ def get_summary(text: str):
         summary = text
     return summary, chat_completion.choices[0].message.parsed, chat_completion.usage
 
+# Main processing logic
 if not SKIP_CHUNKING:
+    # Initialize storage for summaries and API usage tracking
     summaries: List[Tuple[str, str, int, dict]] = []
     usage = []
+
+    # Process each book file pattern
     for pattern in file_patterns:
+        # Load and process text files matching the pattern
         text_dict = chunker.read_text_files(pattern)
         print(f'Processing {pattern}')
+        
+        # Store summaries for the current book
         book_summaries: List[Tuple[str, str, int, dict]] = []
+
+        # Process each book's chapters
         for _, book_info in text_dict.items():
             book_number = book_info['book_number']
             processed_chapters = 0
@@ -183,6 +258,7 @@ for file in glob(glob_expression):
             raise
 
 print('Getting Chroma client')
+# Initialize ChromaDB client and embedding function
 chroma_client = chromadb.PersistentClient(CHROMA_PATH)
 embedder = Embedder()
 collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION, embedding_function=embedder)

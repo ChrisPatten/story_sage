@@ -11,18 +11,35 @@ logger = logging.getLogger()
 
 @dataclass
 class StorySageConfig:
-    """
-    Represents the configuration for StorySage.
+    """Configuration manager for the StorySage application.
+
+    This class handles all configuration aspects of StorySage, including OpenAI integration,
+    vector database settings, entity management, and caching configurations.
 
     Attributes:
-        openai_api_key (str): API key for OpenAI.
-        chroma_path (str): Path to the Chroma configuration.
-        chroma_collection (str): Name of the Chroma collection.
-        n_chunks (int): Number of chunks for processing.
-        entities (Dict[str, StorySageEntityCollection]): Dictionary of entity collections.
-        series (List[StorySageSeries]): List of series in the configuration.
-        redis_instance (redis.Redis): Redis instance for caching.
-        redis_ex (int): Redis expiration time in seconds.
+        openai_api_key (str): Authentication key for OpenAI API access.
+        chroma_path (str): File system path to the Chroma vector database.
+        chroma_collection (str): Name of the collection within Chroma DB.
+        n_chunks (int): Number of text chunks for processing large documents.
+        prompts (Dict[str, List[Dict[str, str]]]): Template prompts for various operations.
+        entities (Dict[str, StorySageEntityCollection]): Named collections of story entities.
+        series (List[StorySageSeries]): Book series configurations.
+        redis_instance (redis.Redis): Connection to Redis cache server.
+        redis_ex (int): Cache expiration time in seconds.
+
+    Example:
+        >>> config = {
+        ...     'OPENAI_API_KEY': 'sk-...',
+        ...     'CHROMA_PATH': './chromadb',
+        ...     'CHROMA_COLLECTION': 'books',
+        ...     'N_CHUNKS': 5,
+        ...     'SERIES_PATH': 'series.yaml',
+        ...     'ENTITIES_PATH': 'entities.json',
+        ...     'REDIS_URL': 'redis://localhost:6379/0',
+        ...     'REDIS_EXPIRE': 3600,
+        ...     'PROMPTS_PATH': 'prompts.yaml'
+        ... }
+        >>> ssconfig = StorySageConfig.from_config(config)
     """
     openai_api_key: str
     chroma_path: str
@@ -35,66 +52,80 @@ class StorySageConfig:
     redis_ex: int = None
 
     def get_series_json(self) -> List[dict]:
-        """
-        Retrieves the series data as a list of dictionaries.
+        """Converts all series configurations to a JSON-compatible format.
 
         Returns:
-            List[dict]: A list of dictionaries containing series data.
-        
+            List[dict]: List of series configurations in dictionary format.
+
         Example:
-            [
-                {
-                    'series_id': '1',
-                    'series_name': 'Series One',
-                    'series_metadata_name': 'Metadata One',
-                    'books': [
-                        {'book_id': '1', 'book_name': 'Book One', ...},
-                        {'book_id': '2', 'book_name': 'Book Two', ...}
-                    ]
-                },
-                ...
-            ]
+            >>> ssconfig = StorySageConfig.from_config(config)
+            >>> series_data = ssconfig.get_series_json()
+            >>> print(series_data[0])
+            {
+                'series_id': 'SH001',
+                'series_name': 'Sherlock Holmes',
+                'series_metadata_name': 'sherlock_holmes',
+                'books': [
+                    {
+                        'book_id': 'SH001-1',
+                        'book_name': 'A Study in Scarlet',
+                        'file_path': './books/study_in_scarlet.txt'
+                    }
+                ]
+            }
         """
         return [series.to_metadata_json() for series in self.series]
     
     def get_series_by_meta_name(self, series_metadata_name: str) -> StorySageSeries:
-        """
-        Retrieves a StorySageSeries object based on the series_metadata_name provided.
+        """Retrieves a specific series by its metadata name.
+
+        Args:
+            series_metadata_name (str): The unique metadata name of the series.
 
         Returns:
-            StorySageSeries: A StorySageSeries object.
-        
+            StorySageSeries: The matching series configuration object.
+            None: If no series matches the provided metadata name.
+
         Example:
-            series = ssconfig.get_series_by_meta_name('sherlock_holmes')
+            >>> ssconfig = StorySageConfig.from_config(config)
+            >>> series = ssconfig.get_series_by_meta_name('sherlock_holmes')
+            >>> print(series.series_name)
+            'Sherlock Holmes'
         """
         return next((series for series in self.series if series.series_metadata_name == series_metadata_name), None)
 
     @classmethod
     def from_config(cls, config: dict) -> 'StorySageConfig':
-        """
-        Creates an instance of StorySageConfig from a dictionary.
+        """Creates a StorySageConfig instance from a configuration dictionary.
+
+        Initializes all components of StorySage including entity collections, series
+        configurations, Redis cache, and prompt templates.
 
         Args:
-            config (dict): A dictionary containing configuration data.
+            config (dict): Configuration parameters including:
+                - OPENAI_API_KEY: OpenAI authentication key
+                - CHROMA_PATH: Path to ChromaDB storage
+                - CHROMA_COLLECTION: Name of ChromaDB collection
+                - SERIES_PATH: Path to series configuration YAML
+                - ENTITIES_PATH: Path to entities JSON file
+                - N_CHUNKS: Number of text chunks for processing
+                - REDIS_URL: Redis connection URL
+                - REDIS_EXPIRE: Redis cache expiration time
+                - PROMPTS_PATH: Path to prompt templates YAML
 
         Returns:
-            StorySageConfig: An instance of StorySageConfig.
+            StorySageConfig: Initialized configuration object.
 
         Raises:
-            ValueError: If a required key is missing from the config.
+            ValueError: If any required configuration key is missing.
+            Exception: If Redis connection fails.
 
         Example:
-            config = {
-                'OPENAI_API_KEY': 'your-api-key',
-                'CHROMA_PATH': '/path/to/chroma',
-                'CHROMA_COLLECTION': 'collection_name',
-                'SERIES_PATH': '/path/to/series.yaml',
-                'ENTITIES_PATH': '/path/to/entities.json',
-                'N_CHUNKS': 10,
-                'REDIS_URL': 'redis://localhost:6379/0',
-                'REDIS_EXPIRE': 3600
-            }
-            ssconfig = StorySageConfig.from_config(config)
+            >>> with open('config.yaml', 'r') as f:
+            ...     config = yaml.safe_load(f)
+            >>> ssconfig = StorySageConfig.from_config(config)
+            >>> print(ssconfig.chroma_collection)
+            'books'
         """
         required_keys = ['OPENAI_API_KEY', 'CHROMA_PATH', 'CHROMA_COLLECTION', 
                          'SERIES_PATH', 'ENTITIES_PATH', 'N_CHUNKS', 'REDIS_URL',

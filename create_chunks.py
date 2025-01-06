@@ -1,30 +1,34 @@
-"""
-chunking.py
+"""Text Processing and Semantic Chunking Utility.
 
-Provides a text chunking utility for semantically splitting long documents using
-sentence embeddings and cosine similarity. The resulting chunks can be stored in
-JSON files for further processing and retrieval.
+This module provides functionality for processing large text documents (like books) into 
+semantically coherent chunks using advanced NLP techniques. It leverages sentence embeddings 
+and cosine similarity to ensure chunks maintain contextual relationships.
 
-Example usage:
-    $ python chunking.py
+Key Features:
+    - Processes multiple books and chapters from a series
+    - Creates semantically meaningful text chunks
+    - Saves processed chunks as JSON files for further use
+    - Configurable chunk sizes and processing parameters
 
-After running:
-    1. The script reads all text files in a series directory (e.g., './books/harry_potter/*.txt').
-    2. Each chapter from each book is processed into coherent chunks.
-    3. Generated chunks are saved as JSON in './chunks/<series_name>/semantic_chunks/'.
+Example Usage:
+    Process a specific series and book:
+        $ python create_chunks.py --series_name "harry_potter" --book_numbers 1 2 3
 
-Example results:
-    The script creates JSON files for each chapter with a list of text chunks. 
-    For instance:
-    [
-        "First chunk of text...",
-        "Second chunk of text...",
-        ...
-    ]
+    Process an entire series:
+        $ python create_chunks.py --series_name "harry_potter"
 
-Note:
-    - Requires nltk, sentence-transformers, scikit-learn, and numpy packages.
-    - Chunks are written to disk for potential embedding or indexing elsewhere.
+Input Directory Structure:
+    ./books/
+        ├── series_name/
+        │   ├── 01_book_title.txt
+        │   ├── 02_book_title.txt
+        │   └── ...
+
+Output Directory Structure:
+    ./chunks/
+        ├── series_name/
+        │   ├── bigger_chunks/
+        │   │   ├──
 """
 
 import os
