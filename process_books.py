@@ -169,21 +169,18 @@ if not SKIP_CHUNKING:
                 summary = [summary[1] for summary in book_summaries]
                 json.dump(summary, open(f'chunks/{SERIES_NAME}/summaries/{book_number}_{chapter_number}.json', 'w'), indent=4)
 
-        summaries.extend(book_summaries)
-else:
-    print('Skipping chunking')
-    glob_expression = f'chunks/{SERIES_NAME}/summaries/[{",".join(BOOK_NUMBERS)}]_*.json'
-    
-    summaries = []
-    for file in glob(glob_expression):
-        filename = os.path.splitext(os.path.basename(file))[0]
-        book_number, chapter_number = filename.split('_')
-        for chunk_idx, summary in enumerate(json.load(open(file, 'r'))):
-            try:
-                summaries.append((book_number, chapter_number, chunk_idx, summary))
-            except KeyError:
-                print(summary)
-                raise
+glob_expression = f'chunks/{SERIES_NAME}/summaries/[{",".join(BOOK_NUMBERS)}]_*.json'
+
+summaries = []
+for file in glob(glob_expression):
+    filename = os.path.splitext(os.path.basename(file))[0]
+    book_number, chapter_number = filename.split('_')
+    for chunk_idx, summary in enumerate(json.load(open(file, 'r'))):
+        try:
+            summaries.append((book_number, chapter_number, chunk_idx, summary))
+        except KeyError:
+            print(summary)
+            raise
 
 print('Getting Chroma client')
 chroma_client = chromadb.PersistentClient(CHROMA_PATH)
