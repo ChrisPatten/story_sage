@@ -14,6 +14,7 @@ import spacy
 from pydantic import BaseModel
 from openai import OpenAI
 
+# These are helpers for development and should both be False before committing
 PRINT_STATE = False
 LOG_STATE = False
 
@@ -61,7 +62,7 @@ class StorySageChain(StateGraph):
 
     def __init__(self, api_key: str, entities: dict[str, StorySageEntityCollection], 
                  series_list: List[StorySageSeries], retriever: StorySageRetriever, 
-                 logger: Optional[logging.Logger] = None):
+                 log_level: int = logging.INFO):
         """Initializes a StorySageChain instance.
 
         Args:
@@ -140,14 +141,8 @@ class StorySageChain(StateGraph):
         # Set up the OpenAI Client to be able to use other APIs besides LangChain
         self.client = OpenAI(api_key=api_key, http_client=httpx.Client(verify=False))
 
-
-        # Initialize the logger
-        if logger:
-            self.logger = logger
-            self.logger.debug('Logger initialized from parent.')
-        else:
-            self.logger = logging.getLogger(__name__)
-            self.logger.debug('Logger initialized locally.')
+        self.logger = logging.getLogger(__name__)
+        self.logger.level = log_level
 
         # Build the state graph for the chain's workflow
         graph_builder = StateGraph(StorySageState)

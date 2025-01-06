@@ -60,10 +60,8 @@ class StorySage:
             n_chunks (int, optional): Number of chunks for the retriever to process. Defaults to 5.
         """
         # Set up logging
-        self._logger = logging.getLogger(__name__)
-        formatter = ConditionalRequestIDFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        self._logger.addHandler(logging.StreamHandler().setFormatter(formatter))
-        self._logger.setLevel(log_level)
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(log_level)
 
         # Initialize request_id
         self.request_id = None
@@ -73,12 +71,9 @@ class StorySage:
         # Initialize series info
         self.series_list = config.series
 
-        # Create a LoggerAdapter to include class attributes
-        self.logger = logging.LoggerAdapter(self._logger, {'request_id': self.request_id})
-
         # Initialize retriever and chain components
         self.retriever = StorySageRetriever(config.chroma_path, config.chroma_collection, config.n_chunks)
-        self.chain = StorySageChain(config.openai_api_key, self.entities, self.series_list, self.retriever, self.logger)
+        self.chain = StorySageChain(config.openai_api_key, self.entities, self.series_list, self.retriever, log_level)
         
 
     def invoke(self, question: str, book_number: int = None, 
@@ -96,12 +91,6 @@ class StorySage:
             Tuple[str, List[str], str, List[str]]: A tuple containing the answer, context list, generated request ID, and list of entity IDs.
         """
         self.logger.info(f"Processing question: {question}")
-        
-        # Generate and set request_id
-        self.request_id = str(uuid.uuid4())
-        self.logger = logging.LoggerAdapter(self._logger, {'request_id': self.request_id})
-        self.logger.debug(f"Set request_id to {self.request_id}")
-        self.chain.logger = self.logger
 
         # Initialize state with default values
         state = StorySageState(
