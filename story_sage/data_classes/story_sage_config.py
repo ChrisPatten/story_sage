@@ -28,6 +28,7 @@ class StorySageConfig:
     chroma_path: str
     chroma_collection: str
     n_chunks: int
+    prompts: Dict[str, List[Dict[str, str]]] = field(default_factory=dict)
     entities: Dict[str, StorySageEntityCollection] = field(default_factory=dict)
     series: List[StorySageSeries] = field(default_factory=list)
     redis_instance: redis.Redis = None
@@ -97,7 +98,7 @@ class StorySageConfig:
         """
         required_keys = ['OPENAI_API_KEY', 'CHROMA_PATH', 'CHROMA_COLLECTION', 
                          'SERIES_PATH', 'ENTITIES_PATH', 'N_CHUNKS', 'REDIS_URL',
-                         'REDIS_EXPIRE']
+                         'REDIS_EXPIRE', 'PROMPTS_PATH']
         for key in required_keys:
             if key not in config:
                 raise ValueError(f"Config is missing required key: {key}")
@@ -126,5 +127,10 @@ class StorySageConfig:
             ssconfig.redis_ex = config['REDIS_EXPIRE']
         except Exception as e:
             logger.error(f"Failed to connect to Redis: {e}")  
+
+        # Load prompts from PROMPTS_PATH
+        with open(config['PROMPTS_PATH'], 'r') as file:
+            ssconfig.prompts = yaml.safe_load(file)
+            logger.debug(f"Loaded prompts from {config['PROMPTS_PATH']}")
 
         return ssconfig

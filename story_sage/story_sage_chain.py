@@ -2,7 +2,7 @@
 import logging
 from langgraph.graph import START, END, StateGraph
 from langchain_openai import ChatOpenAI
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from .data_classes.story_sage_state import StorySageState
 from .vector_store import StorySageRetriever
 from .story_sage_stepback import StorySageStepback
@@ -61,7 +61,8 @@ class StorySageChain(StateGraph):
     """
 
     def __init__(self, api_key: str, entities: dict[str, StorySageEntityCollection], 
-                 series_list: List[StorySageSeries], retriever: StorySageRetriever, 
+                 series_list: List[StorySageSeries], retriever: StorySageRetriever,
+                 prompts: dict[str, list[dict[str, str]]],
                  log_level: int = logging.INFO):
         """Initializes a StorySageChain instance.
 
@@ -105,38 +106,16 @@ class StorySageChain(StateGraph):
         # Load the spaCy NLP model
         self.nlp = spacy.load("en_core_web_sm")
 
+        self.prompts = prompts
+
         # Initialize the Stepback module to optimize queries
         self.stepback = StorySageStepback(api_key=api_key)
         # Set up the OpenAI language model with the provided API key
         self.llm = ChatOpenAI(api_key=api_key, model='gpt-4o-mini', http_client=httpx.Client(verify=False))
         # Define the prompt template for generating responses
-        self.prompt = PromptTemplate(
-            input_variables=['question', 'context', 'book_number', 'chapter_number', 'conversation'],
-            template="""
-                HUMAN
+        generate_messages_list = [(role, message) for item in self.prompts['generate_prompt'] for role, message in item.items()]
 
-                You are an assistant to help a reader keep track of people, places, and plot points in books.
-                The attached pieces of retrieved context are excerpts from the books related to the reader's question. Use them to generate your response.
-
-                Guidelines for the response:
-                * If you don't know the answer or aren't sure, just say that you don't know. 
-                * Don't provide any irrelevant information. Most importantly: DO NOT PROVIDE INFORMATION FROM OUTSIDE THE CONTEXT.
-                * Use bullet points to provide excerpts from the context that support your answer. Reference the book and chapter whenever you include an excerpt.
-                * If there is no context, you can say that you don't have enough information to answer the question.
-
-                The reader is currently in Book {book_number}, Chapter {chapter_number}. Don't limit your responses to just this book. Answer the reader's question
-                taking into account all the context provided.
-
-                ---------------------
-                Question: {question} 
-                ---------------------
-                Previous Conversation: {conversation}
-                ---------------------
-                Context: {context} 
-                ---------------------
-                Answer:
-            """
-        )
+        self.generate_prompt = ChatPromptTemplate(messages=generate_messages_list, input_variables=['question', 'context'])
 
         # Set up the OpenAI Client to be able to use other APIs besides LangChain
         self.client = OpenAI(api_key=api_key, http_client=httpx.Client(verify=False))
@@ -272,31 +251,9 @@ class StorySageChain(StateGraph):
             secondary_query: str
         
         summaries = "\n".join([f"- {id}: {doc}" for id, doc in state['initial_context'].items()])
+        conversation_steps = [{'role': role, 'content': message.format(summaries=summaries, question=state['question'])} for step in self.prompts['relevant_chunks_prompt'] for role, message in step.items()]
         chat_completion = self.client.beta.chat.completions.parse(
-            messages=[
-                {
-                    "role": "system",
-                    "content": f"""
-                        You will receive a list of summaries of chunked passages from bookes along with their IDs.
-                        Based on the provided summaries, please identify the IDs of the chunks that are most relevant to the input text.
-                        Make sure to return at least some IDs, even if you are not sure about their relevance.
-                        The summaries are in the format:
-
-                        - <chunk_id>: <summary>
-
-                        If the answer to the input text is not likely to be present based on the summaries, 
-                            please provide a secondary query to send to the vector store that would help in identifying more relevant chunks.
-                        For example, if the input text is about someone with a relationship to someone else,
-                            write a query that would help in identifying who the other people in the relationship are.
-
-                        Input text: {state['question']}
-                    """
-                },
-                {
-                    "role": "user",
-                    "content": summaries
-                }
-            ],
+            messages=conversation_steps,
             model="gpt-4o-mini",
             response_format=RelevantChunks
         )
@@ -335,9 +292,9 @@ class StorySageChain(StateGraph):
         )
 
         context = [ 
-            f"Book {m['book_number']}, Chapter {m['chapter_number']}: {m['full_chunk']}" for m in sorted_results
+            f"\"\"\"\nBook {m['book_number']}, Chapter {m['chapter_number']}: {m['full_chunk']}" for m in sorted_results
         ]
-
+        
         new_node_history = state['node_history'].append('GetContextByIds') if state['node_history'] else ['GetContextByIds']
 
         return {
@@ -371,9 +328,11 @@ class StorySageChain(StateGraph):
 
         results = self.retriever.retrieve_chunks(query_str=state['question'], context_filters=state['context_filters'])
         try:
-            docs_with_metadata = zip(results['docs'][0], results['metadatas'][0])
+            docs_with_metadata = zip(results['documents'][0], results['metadatas'][0])
         except KeyError:
+            print('🔥' * 20)
             print(results)
+            print('🔥' * 20)
             raise
 
         # Sort the results by book_number and chapter_number
@@ -383,7 +342,7 @@ class StorySageChain(StateGraph):
         )
 
         context = [ 
-            f"Book {m[1]['book_number']}, Chapter {m[1]['chapter_number']}: {m[0]}" for m in sorted_results
+            f"\"\"\"\nBook {m[1]['book_number']}, Chapter {m[1]['chapter_number']}: {m[0]}" for m in sorted_results
         ]
 
         new_node_history = state['node_history'].append('GetContext') if state['node_history'] else ['GetContext']
@@ -417,9 +376,9 @@ class StorySageChain(StateGraph):
         """
         print_state(f"generate", state)
         # Combine context excerpts into a single string
-        docs_content = '\n\n'.join(state['context'])
+        docs_content = '\n'.join(state['context']) + '\n\"\"\"'
         # Invoke the prompt with the question and context
-        messages = self.prompt.invoke(
+        messages = self.generate_prompt.invoke(
             {'question': state['question'], 'context': docs_content, 
              'book_number': state['book_number'], 'chapter_number': state['chapter_number'],
              'conversation': state['conversation']}
@@ -427,7 +386,7 @@ class StorySageChain(StateGraph):
         self.logger.debug(f"LLM prompt: {messages}")
         # Get the response from the language model
         response = self.llm.invoke(messages)
-        print(response)
+
         # Return the generated answer
 
         new_node_history = state['node_history'].append('Generate') if state['node_history'] else ['Generate']

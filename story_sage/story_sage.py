@@ -73,7 +73,7 @@ class StorySage:
 
         # Initialize retriever and chain components
         self.retriever = StorySageRetriever(config.chroma_path, config.chroma_collection, config.n_chunks)
-        self.chain = StorySageChain(config.openai_api_key, self.entities, self.series_list, self.retriever, log_level)
+        self.chain = StorySageChain(config.openai_api_key, self.entities, self.series_list, self.retriever, config.prompts, log_level)
         
 
     def invoke(self, question: str, book_number: int = None, 
