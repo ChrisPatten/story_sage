@@ -1,8 +1,6 @@
 from openai import OpenAI
 from typing import Dict, List, Any, Tuple
-from .data_classes.story_sage_config import StorySageConfig
-from .story_sage_conversation import StorySageConversation
-from .data_classes.story_sage_context import StorySageContext
+from ..models import StorySageConfig, StorySageConversation, StorySageContext
 from pydantic import BaseModel
 import httpx
 import logging

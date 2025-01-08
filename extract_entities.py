@@ -29,7 +29,7 @@ import glob
 import re
 import os
 from story_sage.utils.local_entity_extractor import StorySageEntityExtractor
-from story_sage.data_classes.story_sage_config import StorySageConfig
+from story_sage.models.story_sage_config import StorySageConfig
 from story_sage.utils.embedding import load_chunk_from_disk
 import argparse
 

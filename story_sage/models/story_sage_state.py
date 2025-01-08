@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, TypedDict, Literal, Tuple
-from ..story_sage_conversation import StorySageConversation
+from .story_sage_conversation import StorySageConversation
 
 @dataclass
 class StorySageState():

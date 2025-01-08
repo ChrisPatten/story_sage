@@ -1,26 +1,8 @@
 import logging
 import uuid
 from typing import Tuple, Optional, Dict, List
-from .types import StorySageConfig, StorySageContext, StorySageState, StorySageConversation, StorySageChain, StorySageRetriever
-
-class ConditionalRequestIDFormatter(logging.Formatter):
-    """Custom formatter that conditionally includes a request ID in log messages.
-    
-    This formatter extends the standard logging.Formatter to add request ID tracking
-    to log messages. If a request_id is present in the log record, it will be appended
-    to the end of the message in brackets.
-    
-    Example:
-        formatter = ConditionalRequestIDFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        # With request_id: "2023-01-01 10:00:00 - StorySage - INFO - Processing query [Request ID: abc-123]"
-        # Without request_id: "2023-01-01 10:00:00 - StorySage - INFO - Processing query"
-    """
-    
-    def format(self, record):
-        if hasattr(record, 'request_id') and record.request_id:
-            original_msg = super().format(record)
-            return f"{original_msg} [Request ID: {record.request_id}]"
-        return super().format(record)
+from .models import StorySageConfig, StorySageContext, StorySageState, StorySageConversation
+from .services import StorySageChain, StorySageRetriever
 
 class StorySage:
     """A sophisticated story comprehension and tracking system.

@@ -37,8 +37,8 @@ import os
 import yaml
 import json
 import argparse
-from story_sage.story_sage_entity import StorySageEntityCollection
-from story_sage.data_classes.story_sage_config import StorySageConfig
+from story_sage.models.story_sage_entity import StorySageEntityCollection
+from story_sage.models.story_sage_config import StorySageConfig
 
 def load_chunk_from_disk(file_path: str) -> List[Document]:
     """Loads text chunks from disk and creates Document objects.
