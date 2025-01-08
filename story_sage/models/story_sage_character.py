@@ -134,14 +134,6 @@ class CharacterCollection:
                 return character
         return None
     
-    def to_json(self):
-        """Convert the collection to a JSON string.
-
-        Returns:
-            str: JSON representation of the collection.
-        """
-        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
-    
     @staticmethod
     def from_json(json_string: str):
         """Create a CharacterCollection from a JSON string.
@@ -159,5 +151,5 @@ class CharacterCollection:
         dict_obj = json.loads(json_string)
         new_collection = CharacterCollection()
         for character_id, character_dict in dict_obj['characters'].items():
-            new_collection.characters[character_id] = CharacterSummary(**character_dict)
+            new_collection.characters[character_id] = CharacterSummary.from_dict(character_dict)
         return new_collection
