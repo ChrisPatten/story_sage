@@ -35,6 +35,10 @@ booknlp/output/
 # HTML files
 quality_test_results.html
 
+# Cover images
+images/**/*.jpg
+images/**/*.png
+
 # Node modules
 node_modules/
 
@@ -43,3 +47,4 @@ node_modules/
 !series.example.yml
 !entity_editor/*.json
 !prompts.example.yml
+!images/books/.gitkeep
