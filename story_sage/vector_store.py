@@ -2,7 +2,7 @@
 import logging  # For logging debug information
 from typing import List  # For type annotations
 import chromadb  # ChromaDB client for vector storage and retrieval
-from chromadb import Documents, EmbeddingFunction, Embeddings, GetResult
+from chromadb import Documents, EmbeddingFunction, Embeddings, GetResult, QueryResult
 import logging
 from sentence_transformers import SentenceTransformer
 import torch
@@ -128,7 +128,7 @@ class StorySageRetriever:
         # Initialize the logger for this module
         self.logger = logger or logging.getLogger(__name__)
 
-    def retrieve_chunks(self, query_str, context_filters: dict) -> List[str]:
+    def retrieve_chunks(self, query_str, context_filters: dict) -> QueryResult:
         """Retrieves text chunks relevant to the query and context.
 
         If no results are found with entity filters, the query is retried
@@ -175,6 +175,28 @@ class StorySageRetriever:
         self.logger.debug(f"Retrieved documents: {query_result}")
         # Return the query results
         return query_result
+    
+    def get_by_keyword(self, keywords: List[str], context_filters: dict) -> QueryResult:
+        """Retrieves text chunks relevant to the keywords and context."""
+        where_filter = self.get_where_filter(context_filters=context_filters,
+                                             include_entities=False)
+        keywords_dict_list = [{'$contains': str.lower(keyword)} for keyword in keywords]
+        and_where_doc = None
+        if len(keywords_dict_list) > 1:
+            and_where_doc = {'$and': keywords_dict_list}
+            or_where_doc = {'$or': keywords_dict_list}
+
+        query_result = self.vector_store.get(
+            limit=self.n_chunks,
+            include=['metadatas', 'documents'],
+            where=where_filter,
+            where_document= or_where_doc or keywords_dict_list
+        )
+
+        self.logger.debug(f"Retrieved documents: {query_result}")
+        return query_result
+        
+        
     
     def get_where_filter(self, context_filters: dict, include_entities: bool = True) -> dict:
         combined_filter = {'series_id': int(context_filters.get('series_id'))}  # Initialize the combined filter dictionary

@@ -1,17 +1,17 @@
 import sys
 from pathlib import Path
 import os
+from typing import Tuple
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 sys.path.append(str(Path(__file__).parent.parent))
-from story_sage.story_sage import StorySage
 import yaml
 import logging
 import markdown
 from tqdm import tqdm
 from story_sage.story_sage import StorySage
-from story_sage.data_classes.story_sage_config import StorySageConfig
+from story_sage.types import StorySageConfig, StorySageContext
 
 # Define paths to configuration files
 config_path = Path(__file__).parent.parent / 'config.yml'
@@ -50,7 +50,7 @@ console_handler.setLevel(logging.DEBUG)
 console_handler.setFormatter(formatter)
 #logger.addHandler(console_handler)
 
-def get_answer(question, series_id, book_number, chapter_number):
+def get_answer(question, series_id, book_number, chapter_number) -> Tuple[str, list[StorySageContext]]:
     """
     Get an answer from the StorySage instance for a given question and book details.
     
@@ -69,10 +69,10 @@ def get_answer(question, series_id, book_number, chapter_number):
         'chapter_number': chapter_number,
         'series_id': series_id
     }
-    result, context, _, _ = story_sage.invoke(**data)
-    return result, context
+    answer, context, _, _ = story_sage.invoke(**data)
+    return answer, context
 
-def get_html_results(results):
+def get_html_results(results: list[dict]) -> str:
     """
     Convert the results into an HTML table format.
     
@@ -127,18 +127,21 @@ th {
     output = f'<html><head><style>{page_css}</style></head><body><div><h1>StorySage Quality Test Results</h1>'
     html_table = f'<table><tr><th>Question</th>'
     context_table = f'<table><tr><th>Question</th>'
-    for book_number in results[0][1]:
+    for book_number in results[0]['book_numbers']:
         html_table += f'<th>Book {book_number}</th>'
         context_table += f'<th>Book {book_number}</th>'
     html_table += "</tr>"
     context_table += "</tr>"
-    for question, book_numbers, answers in results:
-        html_table += f'<tr><td>{question}</td>'
-        context_table += f'<tr><td>{question}</td>'
-        for answer in answers:
-            answer_list = '\n\n'.join(answer[1])
-            html_table += f'<td>{markdown.markdown(answer[0])}</td>'
-            context_table += f'<td>{markdown.markdown(answer_list)}</td>'
+    for result in results:
+        html_table += f"<tr><td>{result['question']}</td>"
+        context_table += f"<tr><td>{result['question']}</td>"
+
+        answer: str
+        context: list[StorySageContext]
+        for answer, context in result['answers']:
+            html_table += f'<td>{markdown.markdown(answer)}</td>'
+            context_string = '\n'.join([c.format_for_llm() for c in context])
+            context_table += f"<td>{markdown.markdown(context_string)}</td>"
         html_table += "</tr>"
         context_table += "</tr>"
     html_table += "</table>"
@@ -155,10 +158,14 @@ results = []
 
 # Iterate over each question and get answers for each book number
 for question in tqdm(question_list, desc='Getting responses to questions'):
-    question_result = (question, book_numbers, [])
+    question_result = {
+        'question': question, 
+        'book_numbers': book_numbers, 
+        'answers': []
+    }
     for book in book_numbers:
-        result, context = get_answer(question, series_number, book, chapter_number=99)
-        question_result[2].append((result, context))
+        answer, context = get_answer(question, series_number, book, chapter_number=99)
+        question_result['answers'].append((answer, context))
     results.append(question_result)
 
 # Write the results to an HTML file

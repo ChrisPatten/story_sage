@@ -1,11 +1,7 @@
 import logging
 import uuid
 from typing import Tuple, Optional, Dict, List
-from .data_classes.story_sage_state import StorySageState
-from .vector_store import StorySageRetriever
-from .story_sage_chain import StorySageChain
-from .data_classes.story_sage_config import StorySageConfig
-from .story_sage_conversation import StorySageConversation
+from .types import StorySageConfig, StorySageContext, StorySageState, StorySageConversation, StorySageChain, StorySageRetriever
 
 class ConditionalRequestIDFormatter(logging.Formatter):
     """Custom formatter that conditionally includes a request ID in log messages.
@@ -90,6 +86,8 @@ class StorySage:
 
         # Initialize request_id
         self.request_id = None
+        
+        self.config = config
 
         self.entities = config.entities
 
@@ -97,13 +95,13 @@ class StorySage:
         self.series_list = config.series
 
         # Initialize retriever and chain components
-        self.retriever = StorySageRetriever(config.chroma_path, config.chroma_collection, config.n_chunks)
-        self.chain = StorySageChain(config.openai_api_key, self.entities, self.series_list, self.retriever, config.prompts, log_level)
+        self.summary_retriever = StorySageRetriever(config.chroma_path, config.chroma_collection, config.n_chunks)
+        self.full_retriever = StorySageRetriever(config.chroma_path, config.chroma_full_text_collection, round(config.n_chunks / 3))
         
 
     def invoke(self, question: str, book_number: int = None, 
                chapter_number: int = None, series_id: int = None,
-               conversation: StorySageConversation = None) -> Tuple[str, List[str], str, List[str]]:
+               conversation: StorySageConversation = None) -> Tuple[str, List[StorySageContext], str, List[str]]:
         """Processes a question about the story and generates a contextual response.
 
         This method coordinates the retrieval of relevant context and the generation
@@ -148,27 +146,23 @@ class StorySage:
         # Initialize state with default values
         state = StorySageState(
             question=question,
-            book_number=book_number or 100,  # Default to end of series if not specified
-            chapter_number=chapter_number or 0,
-            series_id=series_id or 0,
-            context=None,
-            answer=None,
-            entities=[],
-            order_by='most_recent',
-            conversation=conversation,
-            node_history=['START'],
-            tokens_used=0
+            book_number=book_number,  
+            chapter_number=chapter_number,
+            series_id=series_id,
+            conversation=conversation
         )
+
+        self.chain = StorySageChain(config=self.config, state=state, log_level=self.logger.level)
 
         try:
             # Process the question through the chain
-            result = self.chain.graph.invoke(state)
+            result = self.chain.invoke()
             
             # Log the results
-            self.logger.debug(f"Generated answer: {result['answer']}")
-            self.logger.debug(f"Retrieved context: {result['context']}")
+            self.logger.debug(f"Generated answer: {result.answer}")
+            self.logger.debug(f"Retrieved context: {result.context}")
             
-            return result['answer'], result['context'], self.request_id, result['entities']
+            return result.answer, result.context, None, result.entities
             
         except Exception as e:
             self.logger.error(f"Error processing question: {e}")

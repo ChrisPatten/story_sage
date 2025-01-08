@@ -56,6 +56,7 @@ class Book:
     title: str
     book_metadata_name: str
     number_of_chapters: int
+    cover_image: str = None
 
     def to_json(self):
         """
@@ -68,7 +69,8 @@ class Book:
             'number_in_series': self.number_in_series,
             'title': self.title,
             'book_metadata_name': self.book_metadata_name,
-            'number_of_chapters': self.number_of_chapters
+            'number_of_chapters': self.number_of_chapters,
+            'cover_image': self.cover_image
         }
 
 @dataclass
