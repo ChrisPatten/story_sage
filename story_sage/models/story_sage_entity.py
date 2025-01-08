@@ -3,24 +3,30 @@ import json
 from typing import List, Tuple, Set
 from scipy.sparse import spmatrix
 
-# Type alias for grouping data structure containing centroid, vectors, and string representations
+# Type alias for the complex grouping data structure
 GroupType = Tuple[spmatrix, spmatrix, Set[str]]
 
 class StorySageEntity():
-    """Represents a single entity in the StorySage system.
+    """A class representing a unique entity in the StorySage system.
 
-    This class handles the creation and management of individual entities, including
-    generating unique identifiers based on the entity's name and type.
+    StorySageEntity represents atomic units of data like characters, locations, or items.
+    Each entity has a unique identifier generated from its name and type, ensuring
+    consistent identification across the system.
 
-    Example usage:
-        entity = StorySageEntity("John Smith", "character")
-        print(entity.entity_name)  # "John Smith"
+    Examples:
+        >>> character = StorySageEntity("Luke Skywalker", "character")
+        >>> print(character.entity_name)  # "Luke Skywalker"
+        >>> print(character.entity_type)  # "character"
+        >>> print(character.entity_id)    # "md5hash..."
+        
+        >>> location = StorySageEntity("Tatooine", "location")
+        >>> print(location)  # "Entity: Tatooine (location)"
 
     Attributes:
-        entity_name (str): The name or label of the entity.
-        entity_type (str): Classification type of the entity (e.g., "character").
-        entity_group_id (str): ID of the group this entity belongs to.
-        entity_id (str): Unique MD5 hash identifier generated from name and type.
+        entity_name (str): The unique name or label of the entity.
+        entity_type (str): The classification of the entity (e.g., "character", "location").
+        entity_group_id (str): The ID of the group this entity belongs to (None if ungrouped).
+        entity_id (str): A unique MD5 hash identifier generated from name and type.
     """
 
     def __init__(self, entity_name: str, entity_type: str = 'entity'):
@@ -61,20 +67,29 @@ class StorySageEntity():
 
 
 class StorySageEntityGroup():
-    """Represents a group of related entities in the StorySage system.
+    """A container class for managing related entities in the StorySage system.
 
-    This class manages collections of related entities, generating a unique group ID
-    if one is not provided. All entities in the group share a common entity_group_id.
+    This class handles grouping of semantically similar or related entities. For example,
+    different names referring to the same character ("Bob", "Robert", "Bobby") would be
+    grouped together.
 
-    Example usage:
-        entity1 = StorySageEntity("John Smith", "character")
-        entity2 = StorySageEntity("Johnny", "character")
-        group = StorySageEntityGroup([entity1, entity2])
-        print(group.entity_group_id)  # Prints the MD5 hash for the group
+    Examples:
+        >>> # Create a group of related character names
+        >>> bob = StorySageEntity("Bob Smith", "character")
+        >>> robert = StorySageEntity("Robert Smith", "character")
+        >>> bobby = StorySageEntity("Bobby", "character")
+        >>> group = StorySageEntityGroup([bob, robert, bobby])
+        >>> print(len(group))  # 3
+        >>> print(group.get_names())  # ['Bob Smith', 'Robert Smith', 'Bobby']
+        
+        >>> # Add a new alias to the group
+        >>> rob = StorySageEntity("Rob", "character")
+        >>> group.add_entity(rob)
+        >>> print(len(group))  # 4
 
     Attributes:
-        entities (List[StorySageEntity]): List of entities in this group.
-        entity_group_id (str): Unique MD5 hash identifier for the group.
+        entities (List[StorySageEntity]): The list of related entities in this group.
+        entity_group_id (str): A unique MD5 hash identifier for the entire group.
     """
 
     def __init__(self, entities: List[StorySageEntity], entity_group_id: str = None):
@@ -166,20 +181,32 @@ class StorySageEntityGroup():
         return group_dict
 
 class StorySageEntityCollection():
-    """Manages collections of entity groups in the StorySage system.
+    """A high-level manager class for organizing multiple entity groups.
 
-    Provides methods for adding, removing, and merging groups, as well as
-    serialization/deserialization. Useful for organizing large sets of related
-    entities and facilitating lookups by group or name.
+    This class provides functionality for managing the entire entity ecosystem,
+    including operations like merging groups, serialization, and lookups.
+    It's particularly useful for maintaining complex entity relationships
+    and performing bulk operations.
 
-    Example usage:
-        collection = StorySageEntityCollection()
-        group = StorySageEntityGroup([StorySageEntity("John Smith", "character")])
-        collection.add_entity_group(group)
-        print(collection.to_json())  # Serialized JSON of the entire collection
+    Examples:
+        >>> # Create and populate a collection
+        >>> collection = StorySageEntityCollection()
+        >>> bob_group = StorySageEntityGroup([
+        ...     StorySageEntity("Bob Smith", "character"),
+        ...     StorySageEntity("Robert Smith", "character")
+        ... ])
+        >>> collection.add_entity_group(bob_group)
+        
+        >>> # Serialize the collection
+        >>> json_data = collection.to_json()
+        >>> new_collection = StorySageEntityCollection.from_json(json_data)
+        
+        >>> # Look up group memberships
+        >>> name_groups = collection.get_names_by_group_id()
+        >>> print(name_groups)  # {'group_id': ['Bob Smith', 'Robert Smith']}
 
     Attributes:
-        entity_groups (List[StorySageEntityGroup]): Storage for multiple entity groups.
+        entity_groups (List[StorySageEntityGroup]): The managed list of entity groups.
     """
 
     def __init__(self, entity_groups: List[StorySageEntityGroup] = []):
@@ -359,14 +386,24 @@ class StorySageEntityCollection():
     
     @classmethod
     def merge_groups(cls, group_1: StorySageEntityGroup, group_2: StorySageEntityGroup) -> StorySageEntityGroup:
-        """Merges two groups into one, combining their entities.
+        """Combines two entity groups into one, preserving unique entities.
+
+        Merges all entities from group_2 into group_1, avoiding duplicates based on
+        entity names. This is useful for combining groups when new relationships
+        are discovered.
 
         Args:
-            group_1 (StorySageEntityGroup): The group to merge into
-            group_2 (StorySageEntityGroup): The group to merge from
-        
+            group_1 (StorySageEntityGroup): The primary group that will contain all entities
+            group_2 (StorySageEntityGroup): The secondary group whose entities will be merged into group_1
+
         Returns:
-            StorySageEntityGroup: group_1 with entities from group_2 merged in
+            StorySageEntityGroup: The merged group containing all unique entities
+
+        Examples:
+            >>> group1 = StorySageEntityGroup([StorySageEntity("Bob", "character")])
+            >>> group2 = StorySageEntityGroup([StorySageEntity("Robert", "character")])
+            >>> merged = StorySageEntityCollection.merge_groups(group1, group2)
+            >>> print(len(merged))  # 2
         """
 
         # Merge entities from group2 into group1

@@ -19,7 +19,38 @@ def print_state(step_name: str, state: StorySageState):
         logging.debug(f'Step: {step_name}')
         logging.debug(f'State: {state}')
 
+"""
+StorySageChain orchestrates the question-answering process for literary text analysis.
+It manages the flow of retrieving relevant context and generating responses using LLM.
+
+Example usage:
+    config = StorySageConfig(
+        chroma_path="path/to/db",
+        chroma_collection="summaries",
+        chroma_full_text_collection="full_text",
+        n_chunks=3
+    )
+    
+    state = StorySageState(
+        question="Who is Sherlock Holmes?",
+        series_id="sherlock_holmes",
+        book_number=1
+    )
+    
+    chain = StorySageChain(config, state)
+    result_state = chain.invoke()
+    print(result_state.answer)
+    # Output: "Sherlock Holmes is a fictional detective created by Sir Arthur Conan Doyle..."
+"""
+
 class StorySageChain:
+    """A chain that orchestrates the retrieval and response generation process.
+    
+    Args:
+        config (StorySageConfig): Configuration object containing settings for the chain
+        state (StorySageState): Current state of the conversation and context
+        log_level (int): Logging level to use. Defaults to logging.WARN
+    """
 
     def __init__(self, config: StorySageConfig, state: StorySageState, 
                  log_level: int = logging.WARN) -> 'StorySageChain':
@@ -38,6 +69,11 @@ class StorySageChain:
         self.state = state
 
     def invoke(self) -> StorySageState:
+        """Execute the chain to generate a response to the question in the current state.
+        
+        Returns:
+            StorySageState: Updated state containing the answer and context
+        """
         # Get the initial context filters
         self._get_context_filters()
 
@@ -58,10 +94,15 @@ class StorySageChain:
                 break
 
         if not self._generate():
-            keywords = self.llm.get_keywords_from_question(question=self.state.question,
-                                                           conversation=self.state.conversation)
-            self.logger.debug(f'Keywords: {keywords}')
-            self._get_context_from_keywords(keywords=keywords)
+            try:
+                keywords = self.llm.get_keywords_from_question(question=self.state.question,
+                                                            conversation=self.state.conversation)
+                self.logger.debug(f'Keywords: {keywords}')
+                self._get_context_from_keywords(keywords=keywords)
+            except Exception as e:
+                self.logger.error(f'Error getting keywords: {e}')
+                self.state.answer = "I'm sorry, I couldn't find an answer to that question."
+                return self.state
 
 
         self._generate()
@@ -71,6 +112,7 @@ class StorySageChain:
 
     # Internal methods for steps in the chain
     def _get_context_filters(self) -> None:
+        """Initialize context filters based on current state for document retrieval."""
         self.state.node_history.append('GetContextFilters')
         self.state.context_filters = {
             'entities': self.state.entities,
@@ -82,6 +124,7 @@ class StorySageChain:
 
 
     def _get_initial_context(self) -> None:
+        """Retrieve initial context using summary retriever."""
         self.state.node_history.append('GetInitialContext')
         self.initial_context = self.summary_retriever.first_pass_query(
             query_str=self.state.question,
@@ -91,12 +134,21 @@ class StorySageChain:
     
 
     def _identify_relevant_chunks(self) -> bool:
+        """Use LLM to identify relevant chunks from initial context.
+        
+        Returns:
+            bool: True if relevant chunks were identified, False otherwise
+        """
         self.state.node_history.append('IdentifyRelevantChunks')
-        relevant_chunks = self.llm.identify_relevant_chunks(
-            question=self.state.question,
-            context=self.initial_context,
-            conversation=self.state.conversation
-        )
+        try:
+            relevant_chunks = self.llm.identify_relevant_chunks(
+                question=self.state.question,
+                context=self.initial_context,
+                conversation=self.state.conversation
+            )
+        except Exception as e:
+            self.logger.error(f'Error identifying relevant chunks: {e}')
+            return False
         if len(relevant_chunks[0]) < 1:
             self.secondary_query = relevant_chunks[1]
             return False
@@ -105,6 +157,11 @@ class StorySageChain:
             return True
 
     def _get_context_by_ids(self) -> bool:
+        """Retrieve context using specific chunk IDs.
+        
+        Returns:
+            bool: True if context was successfully retrieved, False if no chunks found
+        """
         self.state.node_history.append('GetContextByIDs')
         results = self.summary_retriever.get_by_ids(self.state.target_ids)
         
@@ -116,6 +173,17 @@ class StorySageChain:
         return True
 
     def _get_context_from_chunks(self, collection: Literal['summary', 'full']) -> bool:
+        """Retrieve context from either summary or full text collection.
+        
+        Args:
+            collection: Either 'summary' or 'full' to specify which collection to query
+            
+        Returns:
+            bool: True if context was successfully retrieved, False if no chunks found
+            
+        Raises:
+            ValueError: If collection is neither 'summary' nor 'full'
+        """
         self.state.node_history.append('GetContextFromChunks')
         if collection == 'summary':
             retriever = self.summary_retriever
@@ -137,6 +205,14 @@ class StorySageChain:
         return True
 
     def _get_context_from_keywords(self, keywords: List[str] = None) -> None:
+        """Retrieve context by searching for specific keywords.
+        
+        Args:
+            keywords: List of keywords to search for. If None, uses words from question
+            
+        Returns:
+            bool: True if context was successfully retrieved, False if no chunks found
+        """
         self.state.node_history.append('GetContextFromKeywords')
         if not keywords:
             keywords = self.state.question.split()
@@ -152,18 +228,34 @@ class StorySageChain:
         return True
 
     def _generate(self) -> None:
+        """Generate response using LLM based on current context and question.
+        
+        Returns:
+            bool: True if generation was successful
+        """
         self.state.node_history.append('Generate')
-        response = self.llm.generate_response(
-            context=self.state.context,
-            question=self.state.question,
-            conversation=self.state.conversation
-        )
-        self.state.answer = response[0]
-        return response[1]
+        try:
+            response = self.llm.generate_response(
+                context=self.state.context,
+                question=self.state.question,
+                conversation=self.state.conversation
+            )
+            self.state.answer = response[0]
+            return response[1]
+        except Exception as e:
+            self.logger.error(f'Error generating response: {e}')
+            return False
     
 
-    def _get_context_from_result(self, results: QueryResult) -> StorySageContext:
+    def _get_context_from_result(self, results: QueryResult) -> List[StorySageContext]:
+        """Convert query results into StorySageContext objects.
         
+        Args:
+            results: Query results from ChromaDB
+            
+        Returns:
+            List[StorySageContext]: List of context objects sorted by chunk ID
+        """
         results['ids'] = flatten_nested_list(results['ids'])
         results['metadatas'] = flatten_nested_list(results['metadatas'])
         
@@ -179,7 +271,7 @@ class StorySageChain:
         )
 
         return [
-            StorySageContext(
+            StorySageContext.from_dict(
                 data = {
                     'chunk_id': m['id'], 
                     'book_number': m['book_number'], 

@@ -1,3 +1,40 @@
+"""StorySageLLM: A wrapper for OpenAI's API to handle conversational document Q&A.
+
+This class provides methods to generate responses, identify relevant document chunks,
+and extract keywords from questions using OpenAI's chat completion API.
+
+Example:
+    config = StorySageConfig(
+        openai_api_key="your-api-key",
+        prompts={...},
+        completion_model="gpt-4",
+        completion_temperature=0.7,
+        completion_max_tokens=1000
+    )
+    
+    llm = StorySageLLM(config)
+    
+    # Generate a response
+    context = [StorySageContext(
+        chunk_id="b1_ch1_001",
+        book_number=1,
+        chapter_number=1,
+        chunk="It was the best of times, it was the worst of times..."
+    )]
+    response, has_answer, follow_up = llm.generate_response(
+        context=context,
+        question="What is mentioned in the document?"
+    )
+    # Response: "The document mentions...", True, "Would you like to know more?"
+    
+    # Identify relevant chunks
+    chunks, query = llm.identify_relevant_chunks(
+        context={"chunk1": "Summary 1", "chunk2": "Summary 2"},
+        question="Find relevant information"
+    )
+    # Result: ["chunk1"], "refined search query"
+"""
+
 from openai import OpenAI
 from typing import Dict, List, Any, Tuple
 from ..models import StorySageConfig, StorySageConversation, StorySageContext
@@ -8,6 +45,19 @@ import logging
 
 
 class StorySageLLM:
+    """A class to handle LLM operations for document Q&A using OpenAI's API.
+    
+    Args:
+        config (StorySageConfig): Configuration object containing API keys, prompts, and model settings
+        log_level (int, optional): Logging level. Defaults to logging.INFO
+    
+    Attributes:
+        config (StorySageConfig): Stored configuration object
+        prompts (dict): Prompt templates from config
+        client (OpenAI): OpenAI client instance
+        logger (Logger): Logger instance for the class
+    """
+    
     def __init__(self, config: StorySageConfig, log_level: int = logging.INFO):
         self.config = config
         self.prompts = config.prompts
@@ -18,6 +68,24 @@ class StorySageLLM:
     def generate_response(self, context: List[StorySageContext], question: str, 
                           conversation: StorySageConversation = None,
                           model: str = None, **kwargs) -> Tuple[str, bool, str]:
+        """Generates a response based on the provided context and question.
+
+        Args:
+            context (List[StorySageContext]): List of context objects containing relevant document content
+            question (str): User's question to be answered
+            conversation (StorySageConversation, optional): Previous conversation history. Defaults to None
+            model (str, optional): OpenAI model to use. Defaults to config's model
+            **kwargs: Additional arguments passed to OpenAI API
+
+        Returns:
+            Tuple[str, bool, str]: Contains:
+                - response: Generated answer text
+                - has_answer: Boolean indicating if an answer was found
+                - follow_up: Suggested follow-up question
+
+        Raises:
+            Exception: If OpenAI API call fails
+        """
         
         class CompletionResult(BaseModel):
             response: str
@@ -45,7 +113,24 @@ class StorySageLLM:
     def identify_relevant_chunks(self, context: Dict[str, str], question: str, 
                                  conversation: StorySageConversation = None, 
                                  model: str = None, **kwargs) -> Tuple[List[str], str]:
+        """Identifies the most relevant document chunks for a given question.
 
+        Args:
+            context (Dict[str, str]): Dictionary mapping chunk IDs to their summaries
+            question (str): User's question to find relevant chunks for
+            conversation (StorySageConversation, optional): Previous conversation history. Defaults to None
+            model (str, optional): OpenAI model to use. Defaults to config's model
+            **kwargs: Additional arguments passed to OpenAI API
+
+        Returns:
+            Tuple[List[str], str]: Contains:
+                - chunk_ids: List of relevant chunk IDs
+                - secondary_query: Refined search query based on the question
+
+        Raises:
+            Exception: If OpenAI API call fails
+        """
+        
         class RelevantChunks(BaseModel):
             chunk_ids: List[str]
             secondary_query: str
@@ -67,6 +152,20 @@ class StorySageLLM:
         
     def get_keywords_from_question(self, question: str, conversation: StorySageConversation = None,
                                    model: str = None, **kwargs) -> List[str]:
+        """Extracts relevant keywords from a question for search purposes.
+
+        Args:
+            question (str): Question to extract keywords from
+            conversation (StorySageConversation, optional): Previous conversation history. Defaults to None
+            model (str, optional): OpenAI model to use. Defaults to config's model
+            **kwargs: Additional arguments passed to OpenAI API
+
+        Returns:
+            List[str]: List of extracted keywords
+
+        Raises:
+            Exception: If OpenAI API call fails
+        """
         
         class KeywordsResult(BaseModel):
             keywords: List[str]
@@ -86,6 +185,14 @@ class StorySageLLM:
 
     
     def _get_conversation_turns(self, conversation: StorySageConversation) -> List[Dict[str, str]]:
+        """Formats conversation history into OpenAI message format.
+
+        Args:
+            conversation (StorySageConversation): Conversation history to format
+
+        Returns:
+            List[Dict[str, str]]: List of message dictionaries with 'role' and 'content'
+        """
         turns = []
         for turn in conversation.turns:
             turns.append({
@@ -100,6 +207,19 @@ class StorySageLLM:
     
     def _set_up_prompt(self, prompt_key: str, prompt_formatter: Dict[str, str], 
                        conversation: StorySageConversation = None) -> List[Dict[str, str]]:
+        """Sets up the complete prompt with system message, conversation history, and user query.
+
+        Args:
+            prompt_key (str): Key to lookup prompt template in config
+            prompt_formatter (Dict[str, str]): Values to format into prompt template
+            conversation (StorySageConversation, optional): Conversation history. Defaults to None
+
+        Returns:
+            List[Dict[str, str]]: Formatted messages ready for OpenAI API
+
+        Raises:
+            KeyError: If prompt_key is not found in configured prompts
+        """
         
         if prompt_key not in self.prompts:
             raise KeyError(f"Prompt key '{prompt_key}' not found in prompts")

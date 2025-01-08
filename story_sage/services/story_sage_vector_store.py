@@ -131,17 +131,34 @@ class StorySageRetriever:
     def retrieve_chunks(self, query_str, context_filters: dict) -> QueryResult:
         """Retrieves text chunks relevant to the query and context.
 
-        If no results are found with entity filters, the query is retried
-        without those filters to broaden the search.
+        Searches the vector store for text chunks that match the query and context filters.
+        Uses a two-step approach: first tries with all filters including entities,
+        then falls back to broader search without entity filters if no results are found.
 
         Args:
-            query_str (str): The user's query string.
-            context_filters (dict): Contains 'book_number', 'chapter_number',
-                'series_id', and optionally 'entities' (list), which are used
-                to filter results.
+            query_str (str): The user's query string (e.g., "What happened to John in the forest?")
+            context_filters (dict): Filters to narrow down the search scope, containing:
+                - book_number (int): The current book number
+                - chapter_number (int): The current chapter number
+                - series_id (int): The ID of the book series
+                - entities (list, optional): List of entity IDs to filter by
 
         Returns:
-            List[str]: A list of retrieved documents containing relevant context.
+            QueryResult: A ChromaDB query result containing:
+                - documents: List of relevant text chunks
+                - metadatas: List of metadata for each chunk
+                - distances: Similarity scores
+                - ids: Unique IDs for each chunk
+
+        Example:
+            >>> context = {
+            ...     'book_number': 2,
+            ...     'chapter_number': 15,
+            ...     'series_id': 1,
+            ...     'entities': ['character_123', 'location_456']
+            ... }
+            >>> result = retriever.retrieve_chunks("What happened in the forest?", context)
+            >>> print(result['documents'][0])  # First matching text chunk
         """
         # Log the incoming query and filters for debugging
         self.logger.debug(f"Retrieving chunks with query: {query_str}, context_filters: {context_filters}")
@@ -177,7 +194,30 @@ class StorySageRetriever:
         return query_result
     
     def get_by_keyword(self, keywords: List[str], context_filters: dict) -> QueryResult:
-        """Retrieves text chunks relevant to the keywords and context."""
+        """Retrieves text chunks containing specific keywords within given context.
+
+        Performs an exact keyword match search within the vector store, considering
+        the provided context filters. Keywords are case-insensitive.
+
+        Args:
+            keywords (List[str]): List of keywords to search for (e.g., ["sword", "castle"])
+            context_filters (dict): Filters to narrow down the search scope, containing:
+                - book_number (int): The current book number
+                - chapter_number (int): The current chapter number
+                - series_id (int): The ID of the book series
+                - entities (list, optional): List of entity IDs to filter by
+
+        Returns:
+            QueryResult: A ChromaDB query result containing:
+                - documents: List of text chunks containing the keywords
+                - metadatas: List of metadata for each chunk
+                - ids: Unique IDs for each chunk
+
+        Example:
+            >>> context = {'series_id': 1, 'book_number': 2, 'chapter_number': 3}
+            >>> result = retriever.get_by_keyword(['sword', 'castle'], context)
+            >>> print(result['documents'])  # Texts containing 'sword' or 'castle'
+        """
         where_filter = self.get_where_filter(context_filters=context_filters,
                                              include_entities=False)
         keywords_dict_list = [{'$contains': str.lower(keyword)} for keyword in keywords]
@@ -199,6 +239,31 @@ class StorySageRetriever:
         
     
     def get_where_filter(self, context_filters: dict, include_entities: bool = True) -> dict:
+        """Constructs a filter dictionary for ChromaDB queries.
+
+        Creates a complex filter that ensures retrieved chunks are from either:
+        1. Earlier books in the series
+        2. Earlier chapters in the same book
+        3. Match the specified entity filters (if include_entities is True)
+
+        Args:
+            context_filters (dict): Dictionary containing filtering criteria
+            include_entities (bool): Whether to include entity filters in the result
+
+        Returns:
+            dict: A nested dictionary structure compatible with ChromaDB's where clause
+
+        Example:
+            >>> filters = {
+            ...     'series_id': 1,
+            ...     'book_number': 2,
+            ...     'chapter_number': 3,
+            ...     'entities': ['character_123']
+            ... }
+            >>> filter_dict = retriever.get_where_filter(filters)
+            >>> print(filter_dict)
+            # Outputs a complex nested dictionary for ChromaDB filtering
+        """
         combined_filter = {'series_id': int(context_filters.get('series_id'))}  # Initialize the combined filter dictionary
 
         # Extract book and chapter numbers, if present
@@ -243,9 +308,23 @@ class StorySageRetriever:
         return combined_filter
 
     def first_pass_query(self, query_str: str, context_filters: dict) -> dict[str, str]:
-        """
-        Performs a larger initial query and returns both the result object and
-        a dictionary of {id: document}.
+        """Performs a broader initial query to get a larger set of potentially relevant chunks.
+
+        This method is useful for getting a wider range of results that can be
+        filtered or re-ranked in subsequent processing steps.
+
+        Args:
+            query_str (str): The query string to search for
+            context_filters (dict): The context filters to apply to the search
+
+        Returns:
+            dict[str, str]: A dictionary mapping chunk IDs to their content
+
+        Example:
+            >>> context = {'series_id': 1, 'book_number': 2, 'chapter_number': 3}
+            >>> results = retriever.first_pass_query("Who is the king?", context)
+            >>> for chunk_id, content in results.items():
+            ...     print(f"Chunk {chunk_id}: {content[:50]}...")
         """
         where_filter = self.get_where_filter(context_filters, include_entities=False)
 
@@ -264,8 +343,21 @@ class StorySageRetriever:
         return doc_dict
     
     def get_by_ids(self, ids: List[str]) -> GetResult:
-        """
-        Retrieves documents from the vector store by their IDs.
+        """Retrieves specific documents from the vector store using their IDs.
+
+        Useful for fetching exact chunks when you already know their IDs from
+        previous queries.
+
+        Args:
+            ids (List[str]): List of chunk IDs to retrieve
+
+        Returns:
+            GetResult: ChromaDB result containing the requested documents and their metadata
+
+        Example:
+            >>> chunk_ids = ['chunk_123', 'chunk_456']
+            >>> results = retriever.get_by_ids(chunk_ids)
+            >>> print(results['documents'])  # The content of the requested chunks
         """
         results = self.vector_store.get(ids=ids, include=['metadatas'])
         return results
