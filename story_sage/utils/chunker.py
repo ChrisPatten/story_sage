@@ -1,3 +1,25 @@
+"""Text chunking utility for breaking documents into semantically meaningful segments.
+
+This module provides functionality to split large text documents into smaller,
+semantically coherent chunks using transformer-based embeddings and similarity
+metrics. It's particularly useful for processing long-form content like books
+or articles where maintaining context and meaning across chunk boundaries is
+important.
+
+Typical usage example:
+    chunker = StorySageChunker()
+    
+    # Process a single text
+    text = '''
+    The wizard raised his staff. Lightning crackled through the air.
+    Meanwhile, in the village below, people watched in terror.
+    '''
+    chunks = chunker.process_file(text)
+    
+    # Process multiple book files
+    book_data = chunker.read_text_files('./books/*.txt')
+"""
+
 import os
 from langchain_core.documents import Document
 import torch
@@ -10,56 +32,87 @@ from collections import OrderedDict
 import re
 
 class StorySageChunker:
-    """A class for chunking text documents into semantically coherent sections.
+    """Chunks text documents into semantically coherent sections using AI embeddings.
 
-    This class uses a sentence transformer model to compute embeddings for text
-    sentences, then identifies chunk boundaries based on semantic similarity.
-    Sentences that have high dissimilarity with their immediate neighbors are
-    used as natural breakpoints, effectively splitting the text into segments.
+    This class implements an intelligent text chunking system that preserves semantic
+    meaning across chunk boundaries. It uses transformer models to understand text
+    context and identifies natural break points where chunks should be split.
+
+    The chunking process involves:
+    1. Converting sentences to embeddings using a transformer model
+    2. Computing semantic similarity between adjacent sentences
+    3. Identifying natural break points based on similarity thresholds
+    4. Merging small chunks to maintain context
 
     Attributes:
-        model (SentenceTransformer): The sentence transformer model used for obtaining sentence embeddings.
+        model: A SentenceTransformer instance used for text embeddings.
 
-    Example usage:
+    Example:
         >>> chunker = StorySageChunker()
-        >>> text = "Once upon a time. A hero began a quest. Another sentence."
+        >>> text = '''
+        ...     The dragon soared through clouds. Its scales glittered in sunlight.
+        ...     Meanwhile, in the castle below, the knights prepared for battle.
+        ...     They sharpened their swords and donned their armor.
+        ... '''
         >>> chunks = chunker.process_file(text)
-        >>> print(chunks)
-        ['Once upon a time.', 'A hero began a quest.', 'Another sentence.']
-
-    Example results:
-        ['Once upon a time.', 'A hero began a quest.', 'Another sentence.']
+        >>> for chunk in chunks:
+        ...     print(f"Chunk: {chunk}\n")
+        
+        Chunk: The dragon soared through clouds. Its scales glittered in sunlight.
+        
+        Chunk: Meanwhile, in the castle below, the knights prepared for battle.
+        They sharpened their swords and donned their armor.
     """
 
     def __init__(self, model_name='sentence-transformers/all-mpnet-base-v1'):
-        """Initializes a StorySageChunker with a specified transformer model.
+        """Initializes the chunker with a specified transformer model.
 
         Args:
-            model_name (str): Name of the sentence transformer model to load. Defaults to 'sentence-transformers/all-mpnet-base-v1'.
+            model_name: String name of the sentence transformer model to use.
+                Defaults to 'sentence-transformers/all-mpnet-base-v1'.
         """
         # Initialize the sentence transformer model
         self.model = SentenceTransformer(model_name)
         device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
         self.model = self.model.to(device)
 
-    def process_file(self, text: str, context_window=1, percentile_threshold=95, min_chunk_size=3):
-        """Processes text into semantically meaningful chunks.
+    def process_file(self, text: str, context_window=1, percentile_threshold=95, min_chunk_size=3) -> list:
+        """Processes text into semantically cohesive chunks.
+
+        Splits input text into chunks while maintaining semantic meaning and context.
+        Uses a sliding window approach to consider surrounding context when making
+        split decisions.
 
         Args:
-            text (str): The text to be chunked.
-            context_window (int): Number of sentences around a target for context.
-            percentile_threshold (int): Percentile used to identify semantic breakpoints.
-            min_chunk_size (int): Minimum acceptable number of sentences before merging.
+            text: The input text to be chunked.
+            context_window: Number of sentences to consider on either side when
+                computing semantic similarity. Larger values preserve more context.
+            percentile_threshold: Threshold percentile for identifying break points.
+                Higher values result in fewer, larger chunks.
+            min_chunk_size: Minimum number of sentences per chunk before attempting
+                to merge with neighbors.
 
         Returns:
-            list: A list of text chunks inferred from semantic boundaries.
+            List of string chunks, where each chunk is a semantically related
+            group of sentences.
 
         Example:
+            >>> text = '''
+            ...     The sun set behind mountains. Stars began to appear.
+            ...     In the forest, creatures stirred. A wolf howled distantly.
+            ... '''
             >>> chunker = StorySageChunker()
-            >>> sample_text = "Sentence one. Sentence two. Sentence three."
-            >>> result = chunker.process_file(sample_text, context_window=1, percentile_threshold=90, min_chunk_size=2)
-            >>> print(result)
-            ['Sentence one. Sentence two.', 'Sentence three.']
+            >>> chunks = chunker.process_file(
+            ...     text,
+            ...     context_window=1,
+            ...     percentile_threshold=90,
+            ...     min_chunk_size=2
+            ... )
+            >>> print(chunks)
+            [
+                'The sun set behind mountains. Stars began to appear.',
+                'In the forest, creatures stirred. A wolf howled distantly.'
+            ]
         """
         sentences = sent_tokenize(text)
         contextualized = self._add_context(sentences, context_window)
@@ -70,22 +123,38 @@ class StorySageChunker:
         final_chunks = self._merge_small_chunks(initial_chunks, embeddings, min_chunk_size)
         return final_chunks
 
-    def read_text_files(self, file_path):
-        """Reads multiple text files and organizes them by book and chapter.
+    def read_text_files(self, file_path: str) -> OrderedDict:
+        """Reads and organizes multiple text files by book and chapter.
 
-        Parses filenames for book numbers, splits text by chapters, and saves
-        results in an OrderedDict structure. Stop at 'GLOSSARY' if present.
+        Processes text files matching the given path pattern, extracting book
+        numbers from filenames and splitting content into chapters. Stops
+        processing at 'GLOSSARY' if present.
 
         Args:
-            file_path (str): A file path pattern (e.g., './texts/*.txt').
+            file_path: Glob pattern matching text files to process
+                (e.g., './books/*.txt').
 
         Returns:
-            OrderedDict: Keys are filenames, values contain book and chapter data.
+            OrderedDict with structure:
+            {
+                'filename.txt': {
+                    'book_number': int,
+                    'chapters': {
+                        0: ['prologue content...'],
+                        1: ['chapter 1 content...'],
+                        ...
+                    }
+                },
+                ...
+            }
 
         Example:
-            >>> text_dict = chunker.read_text_files('./books/*.txt')
-            >>> print(len(text_dict))
-            3
+            >>> chunker = StorySageChunker()
+            >>> books = chunker.read_text_files('./fantasy_series/*.txt')
+            >>> print(f"Found {len(books)} books")
+            Found 3 books
+            >>> print(f"Chapters in book 1: {len(books['1_book.txt']['chapters'])}")
+            Chapters in book 1: 12
         """
         chapter_pattern = re.compile(
             r'^\s*(CHAPTER)\s+(\d+|\w+)',
@@ -117,20 +186,26 @@ class StorySageChunker:
                     if re.match(r'GLOSSARY', line, re.IGNORECASE):
                         break
                     line = re.sub(chapter_pattern, '', line)
+                    # Strip all non-alphanumeric characters from the beginning of the line
+                    line = re.sub(r'^\W+', '', line)
                     book_info['chapters'][chapter_number].append(line)
                 text_dict[fname] = book_info
                 print(f'Book {book_number} has {len(book_info["chapters"])} chapters (0 indexed to include prologue).')
         return text_dict
 
-    def _add_context(self, sentences, window_size):
-        """Adds neighboring sentences to each sentence for improved context.
+    def _add_context(self, sentences: list, window_size: int) -> list:
+        """Enhances sentences with surrounding context.
+
+        For each sentence, creates a context window including neighboring sentences
+        to improve semantic understanding when generating embeddings.
 
         Args:
-            sentences (list): A list of sentence strings.
-            window_size (int): The number of neighboring sentences to include.
+            sentences: List of individual sentences.
+            window_size: Number of sentences to include on either side.
 
         Returns:
-            list: A list of contextualized sentences.
+            List of strings where each string contains the target sentence with
+            its context window.
         """
         contextualized = []
         for i in range(len(sentences)):

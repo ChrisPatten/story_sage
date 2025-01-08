@@ -1,27 +1,50 @@
-"""
-Process books into semantic chunks for a story analysis system.
+"""Process and analyze books for semantic search and story analysis.
 
-This script processes text files containing book content into semantic chunks,
-generates summaries using GPT-4, and stores them in a vector database (ChromaDB).
-It handles multiple books in a series and manages the chunking, summarization,
-and storage of text segments.
+This script processes books into semantic chunks for advanced story analysis and search.
+It performs the following main functions:
+1. Reads book text files from a specified series
+2. Chunks text into semantic segments using StorySageChunker
+3. Generates AI summaries using GPT-4
+4. Creates embeddings via SentenceTransformer and stores them in ChromaDB
+5. Extracts metadata like characters, locations, and key objects
 
-Example usage:
-    # Process books 1 and 2 from the "harry_potter" series
-    python process_books.py --series_name harry_potter --book_numbers 1 2
+Key Features:
+    - Processes multiple books in a series
+    - Handles chapter-by-chapter analysis
+    - Generates both summary and full-text embeddings
+    - Extracts structured story elements (characters, locations, etc.)
+    - Supports incremental processing with skip options
 
-    # Process all books in a series, skipping the chunking step
-    python process_books.py --series_name lord_of_rings --skip_chunking
+Dependencies:
+    - StorySageChunker: Handles semantic text chunking with configurable windows
+    - StorySageConfig: Manages application settings and series configurations
+    - Embedder: Generates text embeddings using SentenceTransformer
 
-Example output structure:
+Example Usage:
+    # Process specific books in a series:
+    python process_books.py --series_name "harry_potter" --book_numbers 1 2
+
+    # Process entire series, skip chunking step:
+    python process_books.py --series_name "lord_of_rings" --skip_chunking
+
+Directory Structure:
     chunks/
-        harry_potter/
-            bigger_chunks/
-                01_1.json  # Book 1, Chapter 1 chunks
-                01_2.json  # Book 1, Chapter 2 chunks
-            summaries/
-                01_1.json  # Book 1, Chapter 1 summaries
-                01_2.json  # Book 1, Chapter 2 summaries
+        series_name/
+            bigger_chunks/      # Raw text chunks
+                01_1.json      # Book 1, Chapter 1
+                01_2.json      # Book 1, Chapter 2
+            summaries/         # Processed summaries
+                01_1.json     # Book 1, Chapter 1
+                01_2.json     # Book 1, Chapter 2
+
+Returns:
+    None. Results are saved to disk and ChromaDB.
+
+Note:
+    - The script requires a valid configuration file (config.yml)
+    - OpenAI API key must be configured in the config file
+    - Input books should follow the naming convention: XX_bookname.txt
+    - Requires sufficient disk space for storing chunks and embeddings
 """
 
 import os
@@ -54,14 +77,21 @@ BOOK_NUMBERS = args.book_numbers
 SKIP_CHUNKING = args.skip_chunking
 
 def load_config(config_path):
-    """
-    Load configuration from a YAML file.
+    """Load and parse StorySage configuration from YAML.
 
     Args:
-        config_path (str): Path to the YAML configuration file.
+        config_path (str): Path to YAML configuration file.
 
     Returns:
-        dict: Parsed configuration dictionary.
+        dict: Parsed configuration containing:
+            - chroma_path: Path to ChromaDB storage
+            - chroma_collection: Name of collection
+            - openai_api_key: API key for GPT access
+            - series_configurations: Book series settings
+
+    Raises:
+        yaml.YAMLError: If YAML parsing fails
+        FileNotFoundError: If config file not found
     """
     with open(config_path, 'r') as file:
         config = yaml.load(file, Loader=yaml.FullLoader)
@@ -90,12 +120,14 @@ if not SKIP_CHUNKING:
     print('OpenAI client created')
 
 class CharacterActions(BaseModel):
-    """
-    Data model for character actions in a text chunk.
+    """Models character actions within a text chunk.
+    
+    Represents a character and their actions as extracted from the text,
+    used for structured story element extraction.
 
     Attributes:
         character (str): Name of the character
-        actions (str): Description of the character's actions
+        actions (str): Description of character's actions/behavior in the chunk
     """
     character: str
     actions: str
@@ -118,20 +150,23 @@ class ChunkSummary(BaseModel):
     objects: list[str]
 
 def get_summary(text: str):
-    """
-    Generate a structured summary of text using GPT-4.
+    """Generate structured summary and extract story elements using GPT-4.
 
-    Uses OpenAI's GPT-4 to create a comprehensive summary including characters,
-    locations, creatures, and objects mentioned in the text.
+    Uses AI to analyze text chunks and extract key story elements in a structured format.
+    Automatically adjusts summary length based on input text length.
 
     Args:
-        text (str): The text chunk to summarize.
+        text (str): Text chunk to analyze.
 
     Returns:
-        tuple: Contains:
-            - str: Condensed summary
-            - ChunkSummary: Structured summary with extracted information
-            - dict: API usage statistics
+        tuple:
+            str: Condensed summary of the chunk
+            ChunkSummary: Structured data containing extracted elements
+            dict: API usage statistics for monitoring
+
+    Dependencies:
+        Requires a configured OpenAI client with access to GPT-4
+        Uses StorySageConfig for API settings and prompt templates
     """
     summary_len = round(len(text.split(' ')) / 5)
     if summary_len < 50:
@@ -244,12 +279,16 @@ if not SKIP_CHUNKING:
                 summary = [summary[1] for summary in book_summaries]
                 json.dump(summary, open(f'chunks/{SERIES_NAME}/summaries/{book_number}_{chapter_number}.json', 'w'), indent=4)
 
+# Load all summary files matching the book numbers pattern
 glob_expression = f'chunks/{SERIES_NAME}/summaries/[{",".join(BOOK_NUMBERS)}]_*.json'
 
+# Collect all summaries into a flat list with their metadata
 summaries = []
 for file in glob(glob_expression):
+    # Extract book and chapter numbers from filename
     filename = os.path.splitext(os.path.basename(file))[0]
     book_number, chapter_number = filename.split('_')
+    # Parse each summary chunk from the JSON file
     for chunk_idx, summary in enumerate(json.load(open(file, 'r'))):
         try:
             summaries.append((book_number, chapter_number, chunk_idx, summary))
@@ -258,25 +297,30 @@ for file in glob(glob_expression):
             raise
 
 print('Getting Chroma client')
-# Initialize ChromaDB client and embedding function
+# Initialize ChromaDB client and embedding function for vector storage
 chroma_client = chromadb.PersistentClient(CHROMA_PATH)
 embedder = Embedder()
+# Create or get collections for both summaries and full text
 collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION, embedding_function=embedder)
 full_text_collection = chroma_client.get_or_create_collection(config.chroma_full_text_collection, embedding_function=embedder)
 
-ids = []
-summary_docs = []
-full_docs = []
-meta = []
+# Initialize lists to store document data for batch processing
+ids = []          # Unique identifiers for each chunk
+summary_docs = [] # Processed summaries
+full_docs = []    # Original full text chunks
+meta = []         # Associated metadata
 
 print('Processing summaries to add to collection')
 for summary in summaries:
+    # Unpack and convert metadata to appropriate types
     book_number, chapter_number, chunk_index, summary_obj = summary
     book_number = int(book_number)
     chapter_number = int(chapter_number)
     chunk_index = int(chunk_index)
+    
+    # Prepare metadata dictionary with all extracted information
     metadatas = {
-        'characters': json.dumps(summary_obj['characters']),
+        'characters': json.dumps(summary_obj['characters']),  # Serialize nested structures
         'locations': json.dumps(summary_obj['locations']),
         'creatures': json.dumps(summary_obj['creatures']),
         'objects': json.dumps(summary_obj['objects']),
@@ -288,24 +332,30 @@ for summary in summaries:
         'series_metadata_name': SERIES_NAME,
         'series_id': series_info.series_id
     }
+    
+    # Create unique identifier for this chunk
     ids.append(f'{SERIES_NAME}_{book_number}_{chapter_number}_{chunk_index}')
     summary_docs.append(summary_obj['summary'])
     full_docs.append(summary_obj['full_chunk'])
     meta.append(metadatas)
 
-
+# Process documents in batches to avoid memory issues
 batch_size = 50
 for i in tqdm(range(0, len(ids), batch_size), desc='Adding to collection'):
+    # Extract current batch
     batch_ids = ids[i:i + batch_size]
     batch_summary_docs = summary_docs[i:i + batch_size]
     batch_full_docs = full_docs[i:i + batch_size]
     batch_summary_meta = meta[i:i + batch_size]
     batch_full_meta = meta[i:i + batch_size]
+    
+    # Remove redundant fields from metadata
     for meta in batch_summary_meta:
-        meta.pop('summary')
+        meta.pop('summary')     # Summary collection doesn't need summary in metadata
     for meta in batch_full_meta:
-        meta.pop('full_chunk')
-    #collection.delete(ids=batch_ids)
+        meta.pop('full_chunk')  # Full text collection doesn't need full text in metadata
+    
+    # Add documents to both collections
     collection.add(ids=batch_ids, documents=batch_summary_docs, metadatas=batch_summary_meta)
     full_text_collection.add(ids=batch_ids, documents=batch_full_docs, metadatas=batch_full_meta)
 
