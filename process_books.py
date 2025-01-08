@@ -262,9 +262,11 @@ print('Getting Chroma client')
 chroma_client = chromadb.PersistentClient(CHROMA_PATH)
 embedder = Embedder()
 collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION, embedding_function=embedder)
+full_text_collection = chroma_client.get_or_create_collection(config.chroma_full_text_collection, embedding_function=embedder)
 
 ids = []
-docs = []
+summary_docs = []
+full_docs = []
 meta = []
 
 print('Processing summaries to add to collection')
@@ -279,6 +281,7 @@ for summary in summaries:
         'creatures': json.dumps(summary_obj['creatures']),
         'objects': json.dumps(summary_obj['objects']),
         'full_chunk': summary_obj['full_chunk'],
+        'summary': summary_obj['summary'],
         'book_number': book_number,
         'chapter_number': chapter_number,
         'chunk_index': chunk_index,
@@ -286,16 +289,24 @@ for summary in summaries:
         'series_id': series_info.series_id
     }
     ids.append(f'{SERIES_NAME}_{book_number}_{chapter_number}_{chunk_index}')
-    docs.append(summary_obj['summary'])
+    summary_docs.append(summary_obj['summary'])
+    full_docs.append(summary_obj['full_chunk'])
     meta.append(metadatas)
 
 
 batch_size = 50
 for i in tqdm(range(0, len(ids), batch_size), desc='Adding to collection'):
     batch_ids = ids[i:i + batch_size]
-    batch_docs = docs[i:i + batch_size]
-    batch_meta = meta[i:i + batch_size]
+    batch_summary_docs = summary_docs[i:i + batch_size]
+    batch_full_docs = full_docs[i:i + batch_size]
+    batch_summary_meta = meta[i:i + batch_size]
+    batch_full_meta = meta[i:i + batch_size]
+    for meta in batch_summary_meta:
+        meta.pop('summary')
+    for meta in batch_full_meta:
+        meta.pop('full_chunk')
     #collection.delete(ids=batch_ids)
-    collection.add(ids=batch_ids, documents=batch_docs, metadatas=batch_meta)
+    collection.add(ids=batch_ids, documents=batch_summary_docs, metadatas=batch_summary_meta)
+    full_text_collection.add(ids=batch_ids, documents=batch_full_docs, metadatas=batch_full_meta)
 
 print(f'Added {len(ids)} documents to collection')

@@ -44,12 +44,16 @@ class StorySageConfig:
     openai_api_key: str
     chroma_path: str
     chroma_collection: str
+    chroma_full_text_collection: str
     n_chunks: int
     prompts: Dict[str, List[Dict[str, str]]] = field(default_factory=dict)
     entities: Dict[str, StorySageEntityCollection] = field(default_factory=dict)
     series: List[StorySageSeries] = field(default_factory=list)
     redis_instance: redis.Redis = None
     redis_ex: int = None
+    completion_model: str = None
+    completion_temperature: float = None
+    completion_max_tokens: int = None
 
     def get_series_json(self) -> List[dict]:
         """Converts all series configurations to a JSON-compatible format.
@@ -127,9 +131,10 @@ class StorySageConfig:
             >>> print(ssconfig.chroma_collection)
             'books'
         """
-        required_keys = ['OPENAI_API_KEY', 'CHROMA_PATH', 'CHROMA_COLLECTION', 
+        required_keys = ['OPENAI_API_KEY', 'CHROMA_PATH', 'CHROMA_COLLECTION', 'CHROMA_FULL_TEXT_COLLECTION',
                          'SERIES_PATH', 'ENTITIES_PATH', 'N_CHUNKS', 'REDIS_URL',
-                         'REDIS_EXPIRE', 'PROMPTS_PATH']
+                         'REDIS_EXPIRE', 'PROMPTS_PATH', 'COMPLETION_MODEL', 'COMPLETION_TEMPERATURE',
+                         'COMPLETION_MAX_TOKENS']
         for key in required_keys:
             if key not in config:
                 raise ValueError(f"Config is missing required key: {key}")
@@ -138,7 +143,11 @@ class StorySageConfig:
             openai_api_key=config['OPENAI_API_KEY'],
             chroma_path=config['CHROMA_PATH'],
             chroma_collection=config['CHROMA_COLLECTION'],
+            chroma_full_text_collection=config['CHROMA_FULL_TEXT_COLLECTION'],
             n_chunks=config['N_CHUNKS'],
+            completion_model=config['COMPLETION_MODEL'],
+            completion_temperature=config['COMPLETION_TEMPERATURE'],
+            completion_max_tokens=config['COMPLETION_MAX_TOKENS']
         )
 
         # Load entities from ENTITIES_PATH
