@@ -21,20 +21,17 @@ Note:
     - Install all dependencies (Flask, etc.) before running.
 """
 
-from flask import Flask, jsonify, request, render_template
+from flask import Flask, jsonify, request, render_template, send_from_directory
 from flask_cors import CORS, cross_origin
-from story_sage.story_sage import StorySage
-from story_sage.story_sage_conversation import StorySageConversation
-from story_sage.data_classes.story_sage_config import StorySageConfig
+from story_sage import StorySage, StorySageConversation, StorySageConfig
 import yaml
 import os
-import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import warnings
 
 CONFIG_PATH = './config.yml'
-
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'  # Disable tokenizers parallelism to avoid warnings
 
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -202,6 +199,10 @@ def feedback():
         # Log the error and return a server error response
         logger.error(f"Error processing feedback: {e}")
         return jsonify({'error': 'Internal server error.'}), 500
+    
+@app.route('/images/<filename>')
+def serve_image(filename):
+    return send_from_directory('images', filename)
 
 if __name__ == '__main__':
     # Run the Flask application on port 5010 with debugging enabled
