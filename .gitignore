@@ -2,6 +2,7 @@
 .python-version
 __pycache__/
 *.pkl
+.pytest_cache
 
 # Text and document files
 *.txt
