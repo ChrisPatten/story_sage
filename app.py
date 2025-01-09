@@ -70,7 +70,8 @@ except Exception as e:
 
 # Initialize the StorySage engine with the provided configurations
 story_sage = StorySage(
-    config = STORY_SAGE_CONFIG
+    config = STORY_SAGE_CONFIG,
+    log_level=logging.DEBUG
 )
 
 @app.route('/')
@@ -133,13 +134,12 @@ def invoke_story_sage():
                                 context=context, response=result, request_id=request_id)
         except Exception as e:
             logger.error(f"Error adding turn to conversation: {e}")
-            logger.error(f'Result: {result}\nContext: {context}\nRequest ID: {request_id}\nEntities: {entities}')
             raise e
         return jsonify({'result': result, 'context': context, 'request_id': request_id, 'conversation_id': str(conversation.conversation_id)})
     except Exception as e:
         # Log the error and return a server error response
         logger.error(f"Error invoking StorySage: {e}")
-        return jsonify({'error': 'Internal server error.'}), 500
+        return jsonify({'error': "I'm sorry, but I experienced an error trying to answer your question. Please let my creator know!"}), 500
 
 @app.route('/invoke', methods=['GET'])
 @cross_origin()

@@ -16,7 +16,7 @@ __pycache__/
 config.yml
 series*.yml
 redis_config.conf
-prompts.yml
+prompts*.yml
 
 # Data files
 *.faiss
@@ -34,7 +34,7 @@ booknlp/output/
 *.json
 
 # HTML files
-quality_test_results.html
+tests/quality_test_results.html
 
 # Cover images
 images/**/*.jpg

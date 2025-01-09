@@ -6,19 +6,6 @@ from ..models import StorySageConfig, StorySageState, StorySageContext
 from . import StorySageLLM, StorySageRetriever
 from ..utils import flatten_nested_list
 
-# These are helpers for development and should both be False before committing
-PRINT_STATE = False
-LOG_STATE = False
-
-def print_state(step_name: str, state: StorySageState):
-    if PRINT_STATE:
-        print(f'Step: {step_name}')
-        print(f'State: {state}')
-        print('🥦' * 20)
-    if LOG_STATE:
-        logging.debug(f'Step: {step_name}')
-        logging.debug(f'State: {state}')
-
 """
 StorySageChain orchestrates the question-answering process for literary text analysis.
 It manages the flow of retrieving relevant context and generating responses using LLM.
@@ -53,7 +40,7 @@ class StorySageChain:
     """
 
     def __init__(self, config: StorySageConfig, state: StorySageState, 
-                 log_level: int = logging.WARN) -> 'StorySageChain':
+                 log_level: int = logging.WARN):
         self.config = config
 
         self.entities = config.entities
@@ -76,24 +63,31 @@ class StorySageChain:
         """
         # Get the initial context filters
         self._get_context_filters()
+        self.logger.debug(f'Context filters: {self.state.context_filters}')
 
         # Get the initial context
         self._get_initial_context()
+        self.logger.debug(f'Initial context: {self.initial_context}')
 
         # Try to get context from vector store
         while True:
             if self._identify_relevant_chunks():
+                self.logger.debug(f'Identified relevant chunks: {self.state.target_ids}')
                 if self._get_context_by_ids():
+                    self.logger.debug(f'Got context by IDs')
                     break
                 else:
                     # handle scenario where it made up IDs
                     pass # For now, let this go on to contents from summary chunks
             elif self._get_context_from_chunks('summary'):
+                self.logger.debug(f'Got context from summary chunks')
                 break
             elif self._get_context_from_chunks('full'):
+                self.logger.debug(f'Got context from full text chunks')
                 break
 
         if not self._generate():
+            self.logger.debug('Generating response from semantic search failed. Trying keyword search.')
             try:
                 keywords = self.llm.get_keywords_from_question(question=self.state.question,
                                                             conversation=self.state.conversation)
@@ -106,6 +100,7 @@ class StorySageChain:
 
 
         self._generate()
+        self.logger.debug(f'Generated response: {self.state.answer}')
 
         return self.state
 
@@ -256,6 +251,7 @@ class StorySageChain:
         Returns:
             List[StorySageContext]: List of context objects sorted by chunk ID
         """
+        self.logger.debug(f'Getting context from result: {results}')
         results['ids'] = flatten_nested_list(results['ids'])
         results['metadatas'] = flatten_nested_list(results['metadatas'])
         
@@ -270,13 +266,18 @@ class StorySageChain:
             key=lambda x: (x['id'])
         )
 
-        return [
-            StorySageContext.from_dict(
-                data = {
-                    'chunk_id': m['id'], 
-                    'book_number': m['book_number'], 
-                    'chapter_number': m['chapter_number'], 
-                    'chunk': m['full_chunk']
-                } 
-            ) for m in results
-        ]
+
+        try:
+            return [
+                StorySageContext.from_dict(
+                    data = {
+                        'chunk_id': m['id'], 
+                        'book_number': m['book_number'], 
+                        'chapter_number': m['chapter_number'], 
+                        'chunk': m['full_chunk']
+                    } 
+                ) for m in results
+            ]
+        except KeyError as e:
+            self.logger.error(f'Tried to access a key that doesn\'t exist in results[\'metadatas\']: {e}')
+            raise e

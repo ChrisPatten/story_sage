@@ -279,8 +279,11 @@ if not SKIP_CHUNKING:
                 summary = [summary[1] for summary in book_summaries]
                 json.dump(summary, open(f'chunks/{SERIES_NAME}/summaries/{book_number}_{chapter_number}.json', 'w'), indent=4)
 
-# Load all summary files matching the book numbers pattern
-glob_expression = f'chunks/{SERIES_NAME}/summaries/[{",".join(BOOK_NUMBERS)}]_*.json'
+
+if BOOK_NUMBERS:
+    glob_expression = f'chunks/{SERIES_NAME}/summaries/[{",".join(BOOK_NUMBERS)}]_*.json'
+else:
+    glob_expression = f'chunks/{SERIES_NAME}/summaries/*_*.json'
 
 # Collect all summaries into a flat list with their metadata
 summaries = []
@@ -350,10 +353,10 @@ for i in tqdm(range(0, len(ids), batch_size), desc='Adding to collection'):
     batch_full_meta = meta[i:i + batch_size]
     
     # Remove redundant fields from metadata
-    for meta in batch_summary_meta:
-        meta.pop('summary')     # Summary collection doesn't need summary in metadata
-    for meta in batch_full_meta:
-        meta.pop('full_chunk')  # Full text collection doesn't need full text in metadata
+    for summary_meta in batch_summary_meta:
+        summary_meta.pop('summary')     # Summary collection doesn't need summary in metadata
+    # We leave 'full_chunk' in metadata for the full text collection since we're lowercasing
+    #   the document for keyword search purposes.
     
     # Add documents to both collections
     collection.add(ids=batch_ids, documents=batch_summary_docs, metadatas=batch_summary_meta)

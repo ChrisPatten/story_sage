@@ -10,8 +10,7 @@ import yaml
 import logging
 import markdown
 from tqdm import tqdm
-from story_sage.story_sage import StorySage
-from story_sage.types import StorySageConfig, StorySageContext
+from story_sage import StorySage, StorySageConfig, StorySageContext
 
 # Define paths to configuration files
 config_path = Path(__file__).parent.parent / 'config.yml'

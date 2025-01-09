@@ -3,6 +3,7 @@ from typing import List, Tuple
 import uuid
 import redis
 import logging
+from .story_sage_context import StorySageContext
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ class TurnType():
         )
     """
     
-    def __init__(self, question: str, detected_entities: List[str], context: List[str], 
+    def __init__(self, question: str, detected_entities: List[str], context: List[StorySageContext], 
                  response: str, request_id: str, sequence: int):
         """Initialize a new conversation turn.
 
@@ -60,7 +61,7 @@ class TurnType():
             return {
                 'question': self.question,
                 'detected_entities': self.detected_entities,
-                'context': self.context,
+                'context': [c.format_for_llm() for c in self.context],
                 'response': self.response,
                 'request_id': self.request_id,
                 'sequence': self.sequence
@@ -142,7 +143,7 @@ class StorySageConversation():
                 self.turns = []
 
     def add_turn(self, question: str, detected_entities: List[str], 
-                 context: List[str], response: str, request_id: str) -> None:
+                 context: List[StorySageContext], response: str, request_id: str) -> None:
         """Adds a new turn to the conversation and persists it to cache if Redis is configured.
 
         Args:

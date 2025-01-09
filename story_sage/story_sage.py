@@ -182,4 +182,6 @@ class StorySage:
             
         except Exception as e:
             self.logger.error(f"Error processing question: {e}")
+            self.logger.debug(f"Question: {question}\nBook: {book_number}\nChapter: {chapter_number}\nSeries: {series_id}")
+            self.logger.debug(f"State: {state}")
             raise e

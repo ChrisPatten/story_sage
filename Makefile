@@ -90,10 +90,16 @@ setup:
 	fi
 	@echo "Setup complete. Update config.yml as necessary and ensure a series.yml file is present in the root directory"
 
-test:
-	@echo "Running tests"
+test_model:
+	@echo "Running test queries"
 	@eval "$$(pyenv init -)" && \
 	eval "$$(pyenv virtualenv-init -)" && \
 	pyenv activate story_sage_env && \
 	python3 tests/quality_test.py
 
+test:
+	@echo "Running all tests"
+	@eval "$$(pyenv init -)" && \
+	eval "$$(pyenv virtualenv-init -)" && \
+	pyenv activate story_sage_env && \
+	pytest story_sage/tests/

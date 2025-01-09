@@ -359,5 +359,6 @@ class StorySageRetriever:
             >>> results = retriever.get_by_ids(chunk_ids)
             >>> print(results['documents'])  # The content of the requested chunks
         """
+        self.logger.debug(f'Retrieving documents by IDs: {ids}')
         results = self.vector_store.get(ids=ids, include=['metadatas'])
         return results
