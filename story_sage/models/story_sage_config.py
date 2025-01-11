@@ -203,3 +203,26 @@ class StorySageConfig:
             logger.debug(f"Loaded prompts from {config['PROMPTS_PATH']}")
 
         return ssconfig
+    
+    @classmethod
+    def from_file(cls, config_path: str) -> 'StorySageConfig':
+        """Creates a new StorySageConfig instance from a configuration file.
+
+        Args:
+            config_path (str): Path to the configuration file (YAML format)
+
+        Returns:
+            StorySageConfig: Fully initialized configuration instance
+
+        Raises:
+            FileNotFoundError: If the configuration file is not found
+            Exception: If the configuration file is invalid or missing required keys
+
+        Example:
+            >>> ssconfig = StorySageConfig.from_file('config.yaml')
+            >>> print(ssconfig.openai_api_key)
+            'sk-...'
+        """
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        return cls.from_config(config)

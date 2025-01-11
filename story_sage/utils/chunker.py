@@ -35,8 +35,19 @@ import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from kneed import KneeLocator
+from typing import TypeAlias
 
 
+class ChapterData():
+    def __init__(self, chapter_number: int):
+        self.chapter_number = chapter_number
+        self.full_text: str = ''
+        self.lines: list[str] = []
+
+class BookData():
+    def __init__(self, book_number: int):
+        self.book_number = book_number
+        self.chapters: dict[int, ChapterData] = {0: ChapterData(0)}
 class StorySageChunker:
     """Chunks text documents into semantically coherent sections using AI embeddings.
 
@@ -78,7 +89,7 @@ class StorySageChunker:
                 Defaults to 'sentence-transformers/all-mpnet-base-v1'.
         """
         # Initialize the sentence transformer model
-        self.model = SentenceTransformer(model_name)
+        self.model = SentenceTransformer(model_name, local_files_only=True)
         device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
         self.model = self.model.to(device)
 
@@ -131,7 +142,7 @@ class StorySageChunker:
         final_chunks = self._merge_small_chunks(initial_chunks, embeddings, min_chunk_size)
         return final_chunks
 
-    def read_text_files(self, file_path: str) -> OrderedDict:
+    def read_text_files(self, file_path: str) -> OrderedDict[str, BookData]:
         """Reads and organizes multiple text files by book and chapter.
 
         Processes text files matching the given path pattern, extracting book
@@ -164,6 +175,7 @@ class StorySageChunker:
             >>> print(f"Chapters in book 1: {len(books['1_book.txt']['chapters'])}")
             Chapters in book 1: 12
         """
+
         chapter_pattern = re.compile(
             r'^\s*(CHAPTER)\s+(\d+|\w+)',
             re.IGNORECASE | re.MULTILINE
@@ -179,7 +191,7 @@ class StorySageChunker:
             book_number = int(book_number_match.group(1))
             print(f'Name: {fname} Book Number: {book_number}')
             with open(file, 'r') as f:
-                book_info = {'book_number': book_number, 'chapters': {0: []}}
+                book_info = BookData(book_number)
                 content = f.read()
                 content = re.sub(chapter_pattern, r'\1 \2', content)
                 chapter_number = 0
@@ -189,16 +201,17 @@ class StorySageChunker:
                         continue
                     if re.match(chapter_pattern, line):
                         chapter_number += 1
-                        if chapter_number not in book_info['chapters']:
-                            book_info['chapters'][chapter_number] = []
+                        if chapter_number not in book_info.chapters.keys():
+                            book_info.chapters[chapter_number] = ChapterData(chapter_number)
                     if re.match(r'GLOSSARY', line, re.IGNORECASE):
                         break
                     line = re.sub(chapter_pattern, '', line)
                     # Strip all non-alphanumeric characters from the beginning of the line
                     line = re.sub(r'^\W+', '', line)
-                    book_info['chapters'][chapter_number].append(line)
+                    book_info.chapters[chapter_number].lines.append(line)
+                    book_info.chapters[chapter_number].full_text += line + ' '
                 text_dict[fname] = book_info
-                print(f'Book {book_number} has {len(book_info["chapters"])} chapters (0 indexed to include prologue).')
+                print(f'Book {book_number} has {len(book_info.chapters)} chapters (0 indexed to include prologue).')
         return text_dict
 
     def _add_context(self, sentences: list, window_size: int) -> list:
