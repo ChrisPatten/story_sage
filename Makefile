@@ -103,3 +103,10 @@ test:
 	eval "$$(pyenv virtualenv-init -)" && \
 	pyenv activate story_sage_env && \
 	pytest story_sage/tests/
+
+vulture:
+	@echo "Running all tests"
+	@eval "$$(pyenv init -)" && \
+	eval "$$(pyenv virtualenv-init -)" && \
+	pyenv activate story_sage_env && \
+	vulture story_sage/ --exclude story_sage/tests/
