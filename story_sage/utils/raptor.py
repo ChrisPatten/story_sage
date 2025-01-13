@@ -35,14 +35,14 @@ Example:
         number_of_levels=3
     )
     
-    # Access the hierarchical results
+    # Access the hierarchical results 
     for book_path, book_data in results.items():
         # Each chapter contains multiple analysis levels
         for chapter_key, chapter_data in book_data.items():
             # Level 1: Original chunks
             original_chunks = chapter_data['level_1']
             
-            # Level 2: First-level summaries
+            # Level 2: First-level summaries 
             summaries = chapter_data['level_2']
             
             # Example: Print a summary's metadata and children
@@ -55,7 +55,7 @@ Example:
 Dependencies:
     - OpenAI: API access for GPT models
     - UMAP: Dimensionality reduction
-    - sklearn: Gaussian Mixture Models
+    - sklearn: Gaussian Mixture Models  
     - tqdm: Progress tracking
     - StorySageConfig: Configuration (.yaml format)
     - StorySageChunker: Text processing utilities
@@ -78,6 +78,9 @@ from typing import List, Tuple, Dict, Literal, Union, TypeAlias
 from collections import OrderedDict
 from sklearn.mixture import GaussianMixture
 from tqdm.notebook import tqdm
+from multiprocessing import Manager, Pool, cpu_count
+from functools import partial
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Valid UMAP metric values
 UMAPMetric = Literal['euclidean', 'manhattan', 'chebyshev', 'minkowski', 'canberra', 'braycurtis',
@@ -177,20 +180,6 @@ class Chunk:
             "children": self.children
         }
 
-class ChunkHierarchy:
-    """Utility class to store hierarchical chunked text data as it's processed."""
-
-    def __init__(self, level: int, summary_chunk_key: str, metadata: Union[ChunkMetadata|dict]):
-        self.level = level
-        self.summary_chunk_key = summary_chunk_key
-
-        if type(metadata) == dict:
-            self.metadata = ChunkMetadata(**metadata)
-        elif type(metadata) == ChunkMetadata:
-            self.metadata = metadata
-        else:
-            raise ValueError("metadata must be a dictionary or ChunkMetadata object.")
-
 _LevelsDict: TypeAlias = Dict[str, List[Chunk]]
 """Type alias for a dictionary of levels containing chunked text data.
    
@@ -201,6 +190,44 @@ _LevelsDict: TypeAlias = Dict[str, List[Chunk]]
         ...
     }
 """
+
+_ChapterWorkerArgs: TypeAlias = Tuple[List[Chunk], int, str, str, dict, int]
+
+def _process_chapter_worker(args: _ChapterWorkerArgs) -> Dict[str, _LevelsDict]:
+    """Process a single chapter's text chunks in parallel.
+
+    This is a worker function designed to run in a separate process, handling
+    one chapter's worth of text processing including embedding, clustering,
+    and summarization.
+
+    Args:
+        args (_ChapterWorkerArgs): Tuple containing:
+            - chapter_data (List[Chunk]): Text chunks for this chapter
+            - chapter_num (int): Chapter number being processed
+            - book_filename (str): Path to the book file
+            - config_path (str): Path to StorySage config
+            - book_tree (dict): Shared dictionary for storing results
+            - number_of_levels (int): Number of hierarchy levels to generate
+
+    Returns:
+        Dict[str, _LevelsDict]: Updated book_tree containing this chapter's results
+    """
+    chapter_data, chapter_num, book_filename, config_path, book_tree, number_of_levels = args
+    # Initialize processor for this process
+    processor = RaptorProcessor(config_path)
+    chapter_levels: _LevelsDict = {'level_1': [chunk for chunk in chapter_data]}
+    print(f'Processing chapter {chapter_num} in {book_filename}...')
+    chapter_results = processor._recursive_embedding_with_cluster_summarization(
+        chunks=chapter_levels,
+        chapter_num=chapter_num,
+        book_tree=book_tree,
+        book_filename=book_filename,
+        number_of_levels=number_of_levels
+    )
+    book_tree[f'chapter_{chapter_num}'] = chapter_results
+    return book_tree
+
+_ClusterChunkData: TypeAlias = Tuple[List[Chunk], List[int], int, int]
 
 class RaptorProcessor:
     """Hierarchical text analysis system using clustering and summarization.
@@ -216,7 +243,7 @@ class RaptorProcessor:
     Args:
         config_path: Path to StorySage configuration YAML
         skip_summarization: If True, skips GPT summary generation
-        seed: Random seed for reproducibility
+        seed: Random seed for reproducibility 
         model_name: OpenAI model identifier
         chunk_size: Target chunk size in characters
         chunk_overlap: Overlap between chunks
@@ -241,6 +268,7 @@ class RaptorProcessor:
         OPENAI_API_KEY: "sk-..."
         CHROMA_PATH: "./chromadb"
         CHROMA_COLLECTION: "book_embeddings"
+        CHROMA_FULL_TEXT_COLLECTION: "book_texts"
         N_CHUNKS: 5
         COMPLETION_MODEL: "gpt-3.5-turbo"
         COMPLETION_TEMPERATURE: 0.7
@@ -262,9 +290,13 @@ class RaptorProcessor:
                  temperature: float = 0.7,
                  max_clusters: int = 50,
                  metric: UMAPMetric = 'cosine',
-                 n_init: int = 2):
+                 n_init: int = 2,
+                 max_summary_threads: int = 1,
+                 max_processes: int = None,
+                 max_levels: int = 3):
         os.environ['TOKENIZERS_PARALLELISM'] = "false"
         self.seed = seed
+        self.config_path = config_path
         self.config = StorySageConfig.from_file(config_path)
         self.chunker = StorySageChunker()
         self.client = OpenAI(api_key=self.config.openai_api_key,
@@ -282,6 +314,11 @@ class RaptorProcessor:
         self.metric = metric
         self.n_init = n_init
         self.skip_summarization = skip_summarization
+        self.max_summary_threads = max_summary_threads
+        self.max_levels = max_levels
+        
+        self.max_processes = max_processes or cpu_count()
+        
 
         self.chunk_tree = None
 
@@ -485,109 +522,255 @@ class RaptorProcessor:
         )
         summary = response.choices[0].message.content.strip()
         return summary
+    
+    def _process_cluster(self, cluster_data: _ClusterChunkData) -> Tuple[str, dict]:
+        """Process a single cluster to generate its summary.
+
+        Takes a cluster's worth of chunks and generates a summary, handling
+        metadata creation and text processing.
+
+        Args:
+            cluster_data (_ClusterChunkData): Tuple containing:
+                - chunk_list (List[Chunk]): All chunks in the current level
+                - chunk_keys (List[int]): Indices of chunks in this cluster
+                - cluster_idx (int): Index of this cluster
+                - level (int): Current hierarchy level
+
+        Returns:
+            Tuple[str, dict]: Generated summary text and associated metadata
+
+        Example:
+            >>> cluster_data = (chunks, [0, 1, 2], 0, 1)
+            >>> summary, metadata = processor._process_cluster(cluster_data)
+            >>> print(f"Summary length: {len(summary)}")
+            Summary length: 150
+        """
+        chunk_list, chunk_keys, cluster_idx, level = cluster_data
+    
+        # Set the metadata
+        cluster_metadata = {
+            "book_number": chunk_list[0].metadata.book_number,
+            "chapter_number": chunk_list[0].metadata.chapter_number,
+            "level": level + 1,
+            "chunk_index": cluster_idx
+        }
+        
+        # Collect and summarize texts
+        cluster_texts = [chunk.text for chunk in chunk_list if chunk.chunk_key in chunk_keys]
+        summary_text = "------\n------".join(cluster_texts)
+        #print(f"Summarizing cluster {cluster_metadata}...")
+        summary = self._generate_summary(summary_text)
+        
+        return summary, cluster_metadata
 
     def _recursive_embedding_with_cluster_summarization(
         self,
         chunks: _LevelsDict,
         chapter_num: int,
-        chunk_tree_key: str,
+        book_tree: dict,
+        book_filename: str,
         number_of_levels: int = 3,
         level: int = 1
     ) -> _LevelsDict:
-        """
-        Recursively embeds texts and generates cluster summaries up to a specified number of levels.
+        """Recursively processes text chunks through multiple levels of embedding and summarization.
+
+        This method implements the core hierarchical analysis pipeline:
+        1. Embeds chunks using the sentence transformer
+        2. Clusters embeddings using two-phase global/local approach
+        3. Generates summaries for each cluster
+        4. Builds parent-child relationships between levels
+        5. Updates the book tree with results
 
         Args:
-            texts (List[str]): The list of texts to process.
-            number_of_levels (int, optional): The maximum number of recursion levels. Defaults to 3.
-            level (int, optional): The current recursion level. Defaults to 1.
+            chunks (_LevelsDict): Dictionary of chunks organized by level
+            chapter_num (int): Current chapter being processed
+            book_tree (dict): Shared dictionary storing all book processing results
+            book_filename (str): Name of the book file being processed
+            number_of_levels (int, optional): Maximum levels to generate. Defaults to 3.
+            level (int, optional): Current processing level. Defaults to 1.
 
         Returns:
-            Dict[int, Tuple[pd.DataFrame, pd.DataFrame]]: A dictionary mapping levels to their cluster and summary DataFrames.
+            _LevelsDict: Updated dictionary containing chunks for all processed levels
+                where each level contains a list of Chunk objects with:
+                - Original or summary text
+                - Embeddings
+                - Parent-child relationships
+                - Metadata
+
+        Example:
+            >>> chunks = {'level_1': [chunk1, chunk2, chunk3]}
+            >>> results = processor._recursive_embedding_with_cluster_summarization(
+            ...     chunks=chunks,
+            ...     chapter_num=1,
+            ...     book_tree=book_tree,
+            ...     book_filename='book1.txt'
+            ... )
+            >>> print(results.keys())
+            dict_keys(['level_1', 'level_2', 'level_3'])
+            >>> print(len(results['level_2']))  # Number of summaries
+            2
         """
         chapter_key = f'chapter_{chapter_num}'
-
-        if level == 1:
-            self.chunk_tree[chunk_tree_key][chapter_key] = {}
+        thread_prefix = f"{book_filename}_{chapter_key}"
+        book_number = next(iter(chunks.values()))[0].metadata.book_number
 
         while level <= number_of_levels:
-            for level_key, chunk_list in chunks.items():
-                # Skip if not the current level
-                if not level_key == f'level_{level}':
-                    continue
+            level_keys = list(chunks.keys())
+            target_level_key = f'level_{level}'
+            if target_level_key in level_keys:
+                chunk_list = chunks[target_level_key]
+            else:
+                raise ValueError(f"Level {level} not found in chunks for chapter {chapter_num} in book {book_number}")
 
-                # Create a list for the next level chunks
-                if level + 1 <= number_of_levels:
-                    next_level: List[Chunk] = []
+            # Initialize next level list if needed
+            if level + 1 <= number_of_levels:
+                next_level: List[Chunk] = []
+                # Initialize the next level in book_tree if it doesn't exist
+                if f'level_{level + 1}' not in book_tree[chapter_key]:
+                    book_tree[chapter_key][f'level_{level + 1}'] = []
 
-                # Embed the chunks
-                for chunk in chunk_list:
+            # Embed the chunks
+            for chunk in chunk_list:
+                if chunk.embedding is None:
                     chunk.embedding = self.chunker.model.encode(chunk.text)
 
-                # Collect the embeddings   
-                chapter_embeddings: np.array[np.ndarray] = np.array([chunk.embedding for chunk in chunk_list])
+            # Collect the embeddings   
+            chapter_embeddings: np.array[np.ndarray] = np.array([chunk.embedding for chunk in chunk_list])
 
-                # Cluster the embeddings
-                clusters_list, num_clusters = self._clustering_algorithm(chapter_embeddings)
-                # Collect the chunk keys for each cluster
-                summary_chunks_to_build = [[] for _ in range(num_clusters)]
-                for idx, clusters in enumerate(clusters_list):
-                    for cluster in clusters:
-                        summary_chunks_to_build[int(cluster)].append(chunk_list[idx].chunk_key)
+            # Cluster the embeddings
+            chunk_cluster_map, num_clusters = self._clustering_algorithm(chapter_embeddings)
+            print(f"Finished clustering level {level} for book {book_number}, chapter {chapter_num}. Found {num_clusters} clusters.")
+            
+            # Collect the chunks that make up each cluster
+            summary_chunks_to_build: List[List[str]] = [[] for _ in range(num_clusters)]
+            """This is a list of lists, where the outer index is the cluster each list contains the chunk keys for that cluster."""
+            for chunk_idx, cluster_labels in enumerate(chunk_cluster_map):
+                for cluster_label in cluster_labels:
+                    summary_chunks_to_build[int(cluster_label)].append(chunk_list[chunk_idx].chunk_key)
 
-                # Build the summaries for each cluster
+            if self.max_summary_threads > 1: # Use threads to process in parallel
+                # Prepare cluster data
+                cluster_tasks = [
+                    (chunk_list, chunk_keys, cluster_idx, level) 
+                    for cluster_idx, chunk_keys in enumerate(summary_chunks_to_build)
+                ]
+                results = [None] * len(cluster_tasks)
+    
+                # Process clusters in parallel
+                with ThreadPoolExecutor(max_workers=min(len(cluster_tasks), self.max_summary_threads), thread_name_prefix=thread_prefix) as executor:
+                    future_to_idx = {
+                        executor.submit(self._process_cluster, task_data): i 
+                        for i, task_data in enumerate(cluster_tasks)
+                    }
+                    
+                    # Collect results in order
+                    for future in as_completed(future_to_idx):
+                        idx = future_to_idx[future]
+                        summary, cluster_metadata = future.result()
+                        # Embed in main thread (CPU-bound)
+                        summary_embedding = self.chunker.model.encode(summary)
+                        results[idx] = (summary, cluster_metadata, summary_embedding)
+                        
+                    # Add summaries to next level
+                    for summary, metadata, embedding in results:
+                        next_level.append(Chunk(summary,
+                                            metadata=metadata,
+                                            embedding=embedding,
+                                            is_summary=True))
+            else: # Process sequentially
+
                 for cluster_idx, chunk_keys in enumerate(summary_chunks_to_build):
-                    # Set the metadata based on the first chunk in the cluster
+                    # Set the metadata
                     cluster_metadata = {
-                        "book_number": chunk_list[0].metadata.book_number,
-                        "chapter_number": chunk_list[0].metadata.chapter_number,
+                        "book_number": book_number,
+                        "chapter_number": chapter_num,
                         "level": level + 1,
                         "chunk_index": cluster_idx
                     }
-                    # Collect the texts for the cluster
+                    
+                    # Collect and summarize texts
                     cluster_texts = [chunk.text for chunk in chunk_list if chunk.chunk_key in chunk_keys]
                     summary_text = "------\n------".join(cluster_texts)
+                    #print(f"Summarizing cluster {cluster_metadata}...")
                     summary = self._generate_summary(summary_text)
-                    # Embed the summary
-                    summary_embedding = self.chunker.model.encode(summary)
-                    # Add the summary to the next level
-                    next_level.append(Chunk(summary, 
-                                            metadata=cluster_metadata, 
-                                            embedding=summary_embedding, 
+                    next_level.append(Chunk(summary,
+                                            metadata=cluster_metadata,
+                                            embedding=self.chunker.model.encode(summary),
                                             is_summary=True))
-                
-                for chunk_idx, parent_idx in enumerate(clusters_list):
-                    chunk_list[chunk_idx].parents.append(next_level[int(parent_idx)].chunk_key)
-                    next_level[int(parent_idx)].children.append(chunk_list[chunk_idx].chunk_key)
-                
-                self.chunk_tree[chunk_tree_key][chapter_key][level_key] = chunk_list
-                self.chunk_tree[chunk_tree_key][chapter_key][f'level_{level + 1}'] = next_level
+                print(f"Finished creating level {level + 1} clusters for book {book_number}, chapter {chapter_num}")
+            
+            # Update relationships and book_tree
+            for curr_lvl_chunk in chunk_list:
+                child_idx = curr_lvl_chunk.metadata.chunk_index
+                parent_idx_list = chunk_cluster_map[child_idx]
+                for parent_idx in parent_idx_list:
+                    curr_lvl_chunk.parents.append(next_level[int(parent_idx)].chunk_key)
+                    next_level[int(parent_idx)].children.append(curr_lvl_chunk.chunk_key)
 
-                # Run for the next level
-                if num_clusters > 1:
-                    chunks = self._recursive_embedding_with_cluster_summarization(chunks, 
-                                                                                chapter_num,
-                                                                                chunk_tree_key,
-                                                                                number_of_levels, 
-                                                                                level + 1)
+            # Store both current and next level chunks
+            book_tree[chapter_key][target_level_key] = chunk_list
+            if level + 1 <= number_of_levels:
+                book_tree[chapter_key][f'level_{level + 1}'] = next_level
+                # Add next level to chunks dict for next iteration
+                chunks[f'level_{level + 1}'] = next_level
+
+            try:
+                book_tree[chapter_key][target_level_key] = chunk_list
+                book_tree[chapter_key][f'level_{level + 1}'] = next_level
+            except KeyError as e:
+                print(f'book_tree: {book_tree}')
+                print(f'chapter_key: {chapter_key}')
+                print(f'level_key: {target_level_key}')
+                print(f'level: {level}')
+                raise e
+
+            # Run for the next level
+            if num_clusters > 1:
+                chunks = self._recursive_embedding_with_cluster_summarization(chunks=chunks, 
+                                                                            chapter_num=chapter_num,
+                                                                            number_of_levels=number_of_levels, 
+                                                                            level=level + 1,
+                                                                            book_filename=book_filename,
+                                                                            book_tree=book_tree)
+            if level == number_of_levels:
+                print(f"Finished processing {chapter_key} for book {book_tree['shared_tree_key']}")
             return chunks
 
     def _get_chunks_from_filepath(self, file_path: str) -> OrderedDict[str, list[list[Chunk]]]:
-        """Loads text from a file path and chunks it into manageable segments.
+        """Loads and chunks text files into a hierarchical structure.
+
+        Processes one or more text files matching the given path pattern,
+        splitting each into chapters and then into semantic chunks.
 
         Args:
-            file_path (str): The path to the file containing the text to process. Accepts glob strings.
+            file_path (str): Glob pattern matching text files to process
+                (e.g., './books/*.txt')
 
         Returns:
-            OrderedDict[str, list[list[Chunk]]]: A dictionary of {book_filepath: [[chunks]]}}. List index is chapter number.
-        """
+            OrderedDict[str, list[list[Chunk]]]: Hierarchical structure where:
+                - Keys are book file paths
+                - First list level contains chapters
+                - Second list level contains chunks within each chapter
+                - Each chunk is a Chunk object with text and metadata
 
+        Raises:
+            ValueError: If no text files are found at the given path
+
+        Example:
+            >>> processor = RaptorProcessor(config_path='config.yaml')
+            >>> chunks = processor._get_chunks_from_filepath('./books/*.txt')
+            >>> print(f"Found {len(chunks)} books")
+            Found 2 books
+            >>> first_book = next(iter(chunks.values()))
+            >>> print(f"First book has {len(first_book)} chapters")
+            First book has 12 chapters
+        """
         chunked_text: OrderedDict[str, list[list[Chunk]]] = {}
         input_text = self.chunker.read_text_files(file_path)
         if len(input_text) < 1:
             raise ValueError("No text found in the provided file path.")
-        for book_filepath, book_info in sorted(input_text.items()):
-            chunked_text[book_filepath] = []
+        for book_filename, book_info in sorted(input_text.items()):
+            chunked_text[book_filename] = []
             for chapter_num, chapter_data in book_info.chapters.items():
                 chunks = self.chunker.sentence_splitter(
                     chapter_data.full_text, 
@@ -598,36 +781,83 @@ class RaptorProcessor:
                 for idx, text in enumerate(chunks):
                     chunk_metadata = {"book_number": book_info.book_number, "chapter_number": chapter_num, "level": 1, "chunk_index": idx}
                     chunk_list.append(Chunk(text, metadata=chunk_metadata))
-                chunked_text[book_filepath].append(chunk_list)
+                chunked_text[book_filename].append(chunk_list)
         return chunked_text
 
-    def process_texts(self,
-                      file_path: str,
-                      number_of_levels: int = 3) -> Dict[str, Dict[str, _LevelsDict]]:
-        """
-        Processes a hierarchy of texts from a file path by embedding, clustering, and summarizing across multiple levels.
+    def process_texts(self, file_path: str, max_levels: int = None, 
+                      max_processes: int = None, max_summary_threads: int = None
+                     ) -> Dict[str, Dict[str, _LevelsDict]]:
+        """Process text files into a multi-level hierarchical summary structure.
+
+        This is the main entry point for text processing. It handles:
+        1. Loading and chunking text files
+        2. Parallel processing across chapters
+        3. Multi-level summarization
+        4. Building parent-child relationships
 
         Args:
-            file_path (str): The path to the file containing the texts to process.
-            number_of_levels (int, optional): The number of hierarchical levels. Defaults to 3.
+            file_path (str): Glob pattern matching text files to process
+            max_levels (int, optional): Override default max hierarchy levels
+            max_processes (int, optional): Override default process pool size
+            max_summary_threads (int, optional): Override default summary thread count
 
         Returns:
-            Dict[str, pd.DataFrame]: A dictionary of DataFrames containing cluster and summary information for each level.
+            Dict[str, Dict[str, _LevelsDict]]: Hierarchical results structure:
+                {
+                    'book_file.txt': {
+                        'chapter_1': {
+                            'level_1': [original chunks],
+                            'level_2': [summaries],
+                            ...
+                        },
+                        'chapter_2': {...}
+                    },
+                    'book2_file.txt': {...}
+                }
+
+        Raises:
+            ValueError: If no text files are found at the given path
+
+        Example:
+            >>> processor = RaptorProcessor('config.yaml')
+            >>> results = processor.process_texts(
+            ...     './books/*.txt',
+            ...     max_levels=3,
+            ...     max_processes=4,
+            ...     max_summary_threads=2
+            ... )
+            >>> print(f"Processed {len(results)} books")
+            Processed 2 books
         """
         
         self.chunk_tree: Dict[str, Dict[str, _LevelsDict]] = {}
 
-        chunked_text = self._get_chunks_from_filepath(file_path)
-        if len(chunked_text) < 1:
-            raise ValueError("No text found in the provided file path.")
+        # Overwrite default values if provided in this method call
+        n_processes = max_processes or self.max_processes
+        self.max_summary_threads = max_summary_threads or self.max_summary_threads
+        self.max_levels = max_levels or self.max_levels
         
-        # Get level 1 chunks for each book into the tree
-        for book_filepath, book_info in chunked_text.items():
-            self.chunk_tree[book_filepath] = {}
-            for chapter_num, chapter_chunks in tqdm(enumerate(book_info), desc=f"Processing {book_filepath}", total=len(book_info)):
-                chapter_levels: _LevelsDict = { 'level_1': [chunk for chunk in chapter_chunks] }
-                self._recursive_embedding_with_cluster_summarization(chapter_levels, 
-                                                                     chapter_num=chapter_num, 
-                                                                     chunk_tree_key=book_filepath)
+        if max_summary_threads is not None:
+            self.max_summary_threads = max_summary_threads
+
+        with Manager() as manager:
+            chunked_text = self._get_chunks_from_filepath(file_path)
+            if len(chunked_text) < 1:
+                raise ValueError("No text found in the provided file path.")
+            
+            # Get level 1 chunks for each book into the tree
+            for book_filename, book_info in chunked_text.items():
+                book_tree = manager.dict()
+                for chapter_num in range(len(book_info)):
+                    book_tree[f'chapter_{chapter_num}'] = {}
+
+                process_args = [
+                    (chapter_data, chapter_num, book_filename, self.config_path, book_tree, self.max_levels)
+                    for chapter_num, chapter_data in enumerate(book_info)
+                ]
+                
+                with Pool(processes=n_processes) as pool:
+                    for book_tree in pool.imap(_process_chapter_worker, process_args):
+                        self.chunk_tree[book_filename] = dict(book_tree)
 
         return self.chunk_tree

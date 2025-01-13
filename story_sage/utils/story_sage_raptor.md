@@ -1,7 +1,7 @@
 # StorySage Raptor
 
 ## Introduction
-The RAPTOR (Recursive Analysis and Processing Through Ordered Representation) system 
+The RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval) system 
 implements a hierarchical text analysis pipeline that processes books at multiple 
 levels using clustering and summarization. It's designed to support both efficient 
 similarity search and controlled information access based on reading progress.
@@ -122,3 +122,13 @@ for book_path, book_data in results.items():
         for summary in summaries:
             print(f"Summary: {summary.text[:100]}...")
             print(f"Summarizes chunks: {summary.children}")
+```
+
+## Credits
+
+Credit for the RAPTOR algorithm goes to Parth Sarthi, Salman Abdullah, Aditi Tuli, Shubh Khanna, Anna Goldie, Christopher D. Manning in their original paper https://arxiv.org/html/2401.18059v1. Their original implementation is available here: https://github.com/parthsarthi03/raptor.
+
+The StorySage Raptor system is a simplified adaptation for the StorySage platform, focusing on book processing and summarization with ability to constrain context by book and chapter number.
+
+Several core components of the RaptorProcessor class are based on the example implementation
+described by Vipul Maheshwari here: https://superlinked.com/vectorhub/articles/improve-rag-with-raptor.
