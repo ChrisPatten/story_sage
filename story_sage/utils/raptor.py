@@ -81,6 +81,8 @@ from tqdm.notebook import tqdm
 from multiprocessing import Manager, Pool, cpu_count
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import gzip
+import pathlib
 
 # Valid UMAP metric values
 UMAPMetric = Literal['euclidean', 'manhattan', 'chebyshev', 'minkowski', 'canberra', 'braycurtis',
@@ -110,6 +112,15 @@ class ChunkMetadata:
         self.chunk_index = chunk_index
 
     def __to_dict__(self) -> dict:
+        return {
+            "book_number": self.book_number,
+            "chapter_number": self.chapter_number,
+            "level": self.level,
+            "chunk_index": self.chunk_index
+        }
+
+    def to_json(self) -> dict:
+        """Convert metadata to JSON-serializable dictionary."""
         return {
             "book_number": self.book_number,
             "chapter_number": self.chapter_number,
@@ -180,6 +191,18 @@ class Chunk:
             "children": self.children
         }
 
+    def to_json(self) -> dict:
+        """Convert chunk to JSON-serializable dictionary."""
+        return {
+            "text": self.text,
+            "metadata": self.metadata.to_json(),
+            "is_summary": self.is_summary,
+            "embedding": self.embedding.tolist() if self.embedding is not None else None,
+            "chunk_key": self.chunk_key,
+            "parents": self.parents,
+            "children": self.children
+        }
+
 _LevelsDict: TypeAlias = Dict[str, List[Chunk]]
 """Type alias for a dictionary of levels containing chunked text data.
    
@@ -229,6 +252,7 @@ def _process_chapter_worker(args: _ChapterWorkerArgs) -> Dict[str, _LevelsDict]:
 
 _ClusterChunkData: TypeAlias = Tuple[List[Chunk], List[int], int, int]
 
+_RaptorResults: TypeAlias = Dict[str, Dict[str, _LevelsDict]]
 class RaptorProcessor:
     """Hierarchical text analysis system using clustering and summarization.
     
@@ -639,7 +663,7 @@ class RaptorProcessor:
 
             # Cluster the embeddings
             chunk_cluster_map, num_clusters = self._clustering_algorithm(chapter_embeddings)
-            print(f"Finished clustering level {level} for book {book_number}, chapter {chapter_num}. Found {num_clusters} clusters.")
+            #print(f"Finished clustering level {level} for book {book_number}, chapter {chapter_num}. Found {num_clusters} clusters.")
             
             # Collect the chunks that make up each cluster
             summary_chunks_to_build: List[List[str]] = [[] for _ in range(num_clusters)]
@@ -697,7 +721,7 @@ class RaptorProcessor:
                                             metadata=cluster_metadata,
                                             embedding=self.chunker.model.encode(summary),
                                             is_summary=True))
-                print(f"Finished creating level {level + 1} clusters for book {book_number}, chapter {chapter_num}")
+                #print(f"Finished creating level {level + 1} clusters for book {book_number}, chapter {chapter_num}")
             
             # Update relationships and book_tree
             for curr_lvl_chunk in chunk_list:
@@ -714,15 +738,8 @@ class RaptorProcessor:
                 # Add next level to chunks dict for next iteration
                 chunks[f'level_{level + 1}'] = next_level
 
-            try:
-                book_tree[chapter_key][target_level_key] = chunk_list
-                book_tree[chapter_key][f'level_{level + 1}'] = next_level
-            except KeyError as e:
-                print(f'book_tree: {book_tree}')
-                print(f'chapter_key: {chapter_key}')
-                print(f'level_key: {target_level_key}')
-                print(f'level: {level}')
-                raise e
+            book_tree[chapter_key][target_level_key] = chunk_list
+            book_tree[chapter_key][f'level_{level + 1}'] = next_level
 
             # Run for the next level
             if num_clusters > 1:
@@ -747,7 +764,7 @@ class RaptorProcessor:
                 (e.g., './books/*.txt')
 
         Returns:
-            OrderedDict[str, list[list[Chunk]]]: Hierarchical structure where:
+            OrderedDict[str, list[list[Chunk]]] : Hierarchical structure where:
                 - Keys are book file paths
                 - First list level contains chapters
                 - Second list level contains chunks within each chapter
@@ -786,7 +803,7 @@ class RaptorProcessor:
 
     def process_texts(self, file_path: str, max_levels: int = None, 
                       max_processes: int = None, max_summary_threads: int = None
-                     ) -> Dict[str, Dict[str, _LevelsDict]]:
+                     ) -> _RaptorResults:
         """Process text files into a multi-level hierarchical summary structure.
 
         This is the main entry point for text processing. It handles:
@@ -830,7 +847,7 @@ class RaptorProcessor:
             Processed 2 books
         """
         
-        self.chunk_tree: Dict[str, Dict[str, _LevelsDict]] = {}
+        self.chunk_tree: _RaptorResults = {}
 
         # Overwrite default values if provided in this method call
         n_processes = max_processes or self.max_processes
@@ -861,3 +878,91 @@ class RaptorProcessor:
                         self.chunk_tree[book_filename] = dict(book_tree)
 
         return self.chunk_tree
+
+    def save_chunk_tree(self, output_path: str, compress: bool = True) -> None:
+        """Save the chunk tree to a JSON file, optionally compressed.
+
+        Args:
+            output_path (str): Path where to save the file
+            compress (bool, optional): Whether to use gzip compression. Defaults to True.
+                                    If True, '.gz' extension will be added if not present.
+        """
+        import json
+        
+        # Handle compression extension
+        path = pathlib.Path(output_path)
+        if compress and path.suffix != '.gz':
+            output_path = str(path.with_suffix(path.suffix + '.gz'))
+        
+        def chunk_tree_to_json(chunk_tree: Dict[str, Dict[str, _LevelsDict]]) -> dict:
+            """Convert the chunk tree to a JSON-serializable dictionary."""
+            json_tree = {}
+            for book_filename, book_data in chunk_tree.items():
+                json_tree[book_filename] = {}
+                for chapter_key, chapter_data in book_data.items():
+                    json_tree[book_filename][chapter_key] = {}
+                    for level_key, level_data in chapter_data.items():
+                        json_tree[book_filename][chapter_key][level_key] = [
+                            chunk.to_json() for chunk in level_data
+                        ]
+            return json_tree
+
+        if self.chunk_tree is None:
+            raise ValueError("No chunk tree to save. Run process_texts() first.")
+
+        # Use minimal JSON for compressed files, pretty print for uncompressed
+        json_data = json.dumps(
+            chunk_tree_to_json(self.chunk_tree),
+            indent=None if compress else 2,  # No indentation for compressed
+            separators=(',', ':') if compress else (', ', ': '),  # Minimal separators for compressed
+            ensure_ascii=False  # Avoid escaping non-ASCII characters
+        )
+        
+        if compress:
+            with gzip.open(output_path, 'wt', encoding='utf-8', compresslevel=9) as f:
+                f.write(json_data)
+        else:
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(json_data)
+
+    def load_chunk_tree(self, input_path: str) -> None:
+        """Load a chunk tree from a JSON file, automatically handling compression.
+
+        Args:
+            input_path (str): Path to the JSON file (can be .gz or uncompressed)
+        """
+        import json
+
+        def json_to_chunk_tree(json_tree: dict) -> _RaptorResults:
+            """Convert a JSON dictionary back to a chunk tree."""
+            chunk_tree = {}
+            for book_filename, book_data in json_tree.items():
+                chunk_tree[book_filename] = {}
+                for chapter_key, chapter_data in book_data.items():
+                    chunk_tree[book_filename][chapter_key] = {}
+                    for level_key, level_data in chapter_data.items():
+                        chunk_tree[book_filename][chapter_key][level_key] = [
+                            Chunk(
+                                text=chunk_data["text"],
+                                metadata=chunk_data["metadata"],
+                                is_summary=chunk_data["is_summary"],
+                                embedding=np.array(chunk_data["embedding"]) if chunk_data["embedding"] is not None else None
+                            ) for chunk_data in level_data
+                        ]
+                        # Restore relationships
+                        for chunk_idx, chunk_data in enumerate(level_data):
+                            curr_chunk = chunk_tree[book_filename][chapter_key][level_key][chunk_idx]
+                            curr_chunk.parents = chunk_data["parents"]
+                            curr_chunk.children = chunk_data["children"]
+            return chunk_tree
+
+        # Auto-detect compression
+        path = pathlib.Path(input_path)
+        is_compressed = path.suffix == '.gz'
+
+        if is_compressed:
+            with gzip.open(input_path, 'rt', encoding='utf-8') as f:
+                self.chunk_tree = json_to_chunk_tree(json.load(f))
+        else:
+            with open(input_path, 'r', encoding='utf-8') as f:
+                self.chunk_tree = json_to_chunk_tree(json.load(f))
