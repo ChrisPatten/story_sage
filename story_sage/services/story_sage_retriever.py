@@ -1,6 +1,6 @@
 # Import necessary libraries and modules
 import logging  # For logging debug information
-from typing import List, Union  # For type annotations
+from typing import List, Union, Literal  # For type annotations
 import torch
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -411,7 +411,8 @@ class StorySageRetriever:
         results = self.vector_store.get(ids=ids, include=['metadatas'])
         return results
 
-    def load_processed_files(self, chunk_tree: Union[_RaptorResults, str], series_id: int) -> None:
+    def load_processed_files(self, chunk_tree: Union[_RaptorResults, str], 
+                             series_id: int) -> None:
         """Loads processed files from RaptorProcessor into the vector store.
 
         Takes the output from RaptorProcessor's process_texts() method or a JSON file path
@@ -484,14 +485,14 @@ class StorySageRetriever:
                     # Add to collection with or without embeddings
                     try:
                         if embeddings:
-                            self.vector_store.add(
+                            self.vector_store.upsert(
                                 ids=ids,
                                 documents=documents,
                                 metadatas=metadatas,
                                 embeddings=embeddings
                             )
                         else:
-                            self.vector_store.add(
+                            self.vector_store.upsert(
                                 ids=ids,
                                 documents=documents,
                                 metadatas=metadatas

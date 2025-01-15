@@ -41,6 +41,7 @@ from ..models import StorySageConfig, StorySageConversation, StorySageContext
 from pydantic import BaseModel
 import httpx
 import logging
+from ..utils.junk_drawer import EmojiFormatter
 
 
 
@@ -62,8 +63,21 @@ class StorySageLLM:
         self.config = config
         self.prompts = config.prompts
         self.client = OpenAI(api_key=config.openai_api_key, http_client=httpx.Client(verify=False))
+
+        # Setup logger with emoji formatter
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
+        
+        # Create console handler if none exists
+        if not self.logger.handlers:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(log_level)
+            
+            # Create and set formatter
+            formatter = EmojiFormatter('%(emoji)s %(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            console_handler.setFormatter(formatter)
+            
+            self.logger.addHandler(console_handler)
 
     def generate_response(self, context: List[StorySageContext], question: str, 
                           conversation: StorySageConversation = None,

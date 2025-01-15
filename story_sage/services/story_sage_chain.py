@@ -5,6 +5,9 @@ from chromadb import QueryResult
 from ..models import StorySageConfig, StorySageState, StorySageContext
 from . import StorySageLLM, StorySageRetriever
 from ..utils import flatten_nested_list
+import regex as re
+
+VALID_CHUNK_ID_PATTERN = re.compile(r'series_\d+\|book_\d+\|chapter_\d+\|level_\d\+|chunk_\d+')
 
 """
 StorySageChain orchestrates the question-answering process for literary text analysis.
@@ -41,17 +44,20 @@ class StorySageChain:
 
     def __init__(self, config: StorySageConfig, state: StorySageState, 
                  log_level: int = logging.WARN):
+
+        self.logger = logging.getLogger(__name__)
+        self.logger.level = log_level
+        
         self.config = config
 
         self.entities = config.entities
         self.series_list = config.series
-        self.summary_retriever = StorySageRetriever(config.chroma_path, config.chroma_collection, config.n_chunks)
-        self.full_retriever = StorySageRetriever(config.chroma_path, config.chroma_full_text_collection, round(config.n_chunks / 3))
+        self.raptor_retriever = StorySageRetriever(chroma_path=config.chroma_path, 
+                                                   chroma_collection_name=config.raptor_collection, 
+                                                   n_chunks=config.n_chunks,
+                                                   logger=self.logger)
         self.prompts = config.prompts
         self.llm = StorySageLLM(config, log_level=log_level)
-
-        self.logger = logging.getLogger(__name__)
-        self.logger.level = log_level
 
         self.state = state
 
@@ -66,8 +72,8 @@ class StorySageChain:
         self.logger.debug(f'Context filters: {self.state.context_filters}')
 
         # Get the initial context
-        self._get_initial_context()
-        self.logger.debug(f'Initial context: {self.initial_context}')
+        self._get_summary_context()
+        self.logger.debug(f'Summary chunks: {self.state.summary_chunks}')
 
         # Try to get context from vector store
         while True:
@@ -76,15 +82,28 @@ class StorySageChain:
                 if self._get_context_by_ids():
                     self.logger.debug(f'Got context by IDs')
                     break
+            if self._get_context_from_chunks(exclude_summaries=True):
+                self.logger.debug(f'Got context from chunks')
+                break
+            else:
+                self.logger.debug('No context found. Trying to get context from full text.')
+                if self._get_context_from_chunks(exclude_summaries=False):
+                    self.logger.debug(f'Got context from full text')
+                    break
                 else:
-                    # handle scenario where it made up IDs
-                    pass # For now, let this go on to contents from summary chunks
-            elif self._get_context_from_chunks('summary'):
-                self.logger.debug(f'Got context from summary chunks')
-                break
-            elif self._get_context_from_chunks('full'):
-                self.logger.debug(f'Got context from full text chunks')
-                break
+                    self.logger.debug('No context found in full text. Trying to get context from keywords.')
+                    try:
+                        keywords = self.llm.get_keywords_from_question(question=self.state.question,
+                                                                    conversation=self.state.conversation)
+                        self.logger.debug(f'Keywords: {keywords}')
+                        self._get_context_from_keywords(keywords=keywords)
+                        break
+                    except Exception as e:
+                        self.logger.error(f'Error getting keywords: {e}')
+                        break
+        
+
+        self.state.summary_chunks = None
 
         if not self._generate():
             self.logger.debug('Generating response from semantic search failed. Trying keyword search.')
@@ -93,15 +112,15 @@ class StorySageChain:
                                                             conversation=self.state.conversation)
                 self.logger.debug(f'Keywords: {keywords}')
                 self._get_context_from_keywords(keywords=keywords)
+                self._generate()
             except Exception as e:
                 self.logger.error(f'Error getting keywords: {e}')
                 self.state.answer = "I'm sorry, I couldn't find an answer to that question."
                 return self.state
 
 
-        self._generate()
+        
         self.logger.debug(f'Generated response: {self.state.answer}')
-
         return self.state
 
 
@@ -116,18 +135,18 @@ class StorySageChain:
             'chapter_number': self.state.chapter_number
         }
         return
-
-
-    def _get_initial_context(self) -> None:
-        """Retrieve initial context using summary retriever."""
-        self.state.node_history.append('GetInitialContext')
-        self.initial_context = self.summary_retriever.first_pass_query(
+    
+    def _get_summary_context(self) -> None:
+        """Retrieve context from the summary collection."""
+        self.state.node_history.append('GetSummaryContext')
+        context_filters = self.state.context_filters.copy()
+        context_filters['top_level_only'] = True
+        self.state.summary_chunks = self.raptor_retriever.retrieve_chunks(
             query_str=self.state.question,
-            context_filters=self.state.context_filters
+            context_filters=context_filters
         )
         return
     
-
     def _identify_relevant_chunks(self) -> bool:
         """Use LLM to identify relevant chunks from initial context.
         
@@ -138,13 +157,16 @@ class StorySageChain:
         try:
             relevant_chunks = self.llm.identify_relevant_chunks(
                 question=self.state.question,
-                context=self.initial_context,
+                context=self.state.summary_chunks,
                 conversation=self.state.conversation
             )
         except Exception as e:
             self.logger.error(f'Error identifying relevant chunks: {e}')
             return False
         if len(relevant_chunks[0]) < 1:
+            self.secondary_query = relevant_chunks[1]
+            return False
+        elif not all(re.match(VALID_CHUNK_ID_PATTERN, chunk_id) for chunk_id in relevant_chunks[0]):
             self.secondary_query = relevant_chunks[1]
             return False
         else:
@@ -158,7 +180,7 @@ class StorySageChain:
             bool: True if context was successfully retrieved, False if no chunks found
         """
         self.state.node_history.append('GetContextByIDs')
-        results = self.summary_retriever.get_by_ids(self.state.target_ids)
+        results = self.raptor_retriever.get_by_ids(self.state.target_ids)
         
         if len(results['ids']) < 1:
             return False
@@ -167,7 +189,7 @@ class StorySageChain:
 
         return True
 
-    def _get_context_from_chunks(self, collection: Literal['summary', 'full']) -> bool:
+    def _get_context_from_chunks(self, exclude_summaries: bool = False) -> bool:
         """Retrieve context from either summary or full text collection.
         
         Args:
@@ -180,16 +202,17 @@ class StorySageChain:
             ValueError: If collection is neither 'summary' nor 'full'
         """
         self.state.node_history.append('GetContextFromChunks')
-        if collection == 'summary':
-            retriever = self.summary_retriever
-        elif collection == 'full':
-            retriever = self.full_retriever
+
+        if exclude_summaries:
+            context_filters = self.state.context_filters.copy()
+            context_filters['exclude_summaries'] = True
         else:
-            raise ValueError('Collection must be "summary" or "full"')
+            context_filters = self.state.context_filters.copy()
+
         
-        results = retriever.retrieve_chunks(
+        results = self.raptor_retriever.retrieve_chunks(
             query_str=self.state.question,
-            context_filters=self.state.context_filters
+            context_filters=context_filters
         )
 
         if len(results['ids'][0]) < 1:
@@ -212,8 +235,8 @@ class StorySageChain:
         if not keywords:
             keywords = self.state.question.split()
         # Get context from the full text retriever
-        results = self.full_retriever.get_by_keyword(keywords=keywords,
-                                                     context_filters=self.state.context_filters)
+        results = self.raptor_retriever.get_by_keyword(keywords=keywords,
+                                                       context_filters=self.state.context_filters)
 
         if len(results['ids']) < 1:
             return False
