@@ -79,7 +79,6 @@ from collections import OrderedDict
 from sklearn.mixture import GaussianMixture
 from tqdm.notebook import tqdm
 from multiprocessing import Manager, Pool, cpu_count
-from functools import partial
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import gzip
 import pathlib

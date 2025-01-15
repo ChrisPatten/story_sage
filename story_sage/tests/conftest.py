@@ -11,8 +11,7 @@ def mock_config_dict():
     return {
         'OPENAI_API_KEY': 'test-key',
         'CHROMA_PATH': './test_chromadb',
-        'CHROMA_COLLECTION': 'test_embeddings',
-        'CHROMA_FULL_TEXT_COLLECTION': 'test_texts',
+        'RAPTOR_COLLECTION': 'test_embeddings',
         'N_CHUNKS': 5,
         'COMPLETION_MODEL': 'gpt-3.5-turbo',
         'COMPLETION_TEMPERATURE': 0.7,

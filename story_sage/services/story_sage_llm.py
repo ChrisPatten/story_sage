@@ -36,7 +36,7 @@ Example:
 """
 
 from openai import OpenAI
-from typing import Dict, List, Any, Tuple, TypeAlias
+from typing import Dict, List, Tuple, TypeAlias
 from ..models import StorySageConfig, StorySageConversation, StorySageContext
 from pydantic import BaseModel
 import httpx

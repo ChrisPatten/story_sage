@@ -23,8 +23,6 @@ class StorySageConfig:
     Attributes:
         openai_api_key (str): API key for OpenAI authentication.
         chroma_path (str): Local filesystem path for ChromaDB storage.
-        chroma_collection (str): Name of the main ChromaDB collection for embeddings.
-        chroma_full_text_collection (str): Name of the ChromaDB collection for full text storage.
         n_chunks (int): Number of chunks to split text into during processing.
         prompts (Dict[str, List[Dict[str, str]]]): Dictionary of prompt templates for various operations.
         entities (Dict[str, StorySageEntityCollection]): Dictionary of entity collections by name.
@@ -39,8 +37,6 @@ class StorySageConfig:
         >>> config = {
         ...     'OPENAI_API_KEY': 'sk-...',
         ...     'CHROMA_PATH': './chromadb',
-        ...     'CHROMA_COLLECTION': 'book_embeddings',
-        ...     'CHROMA_FULL_TEXT_COLLECTION': 'book_texts',
         ...     'RAPTOR_COLLECTION': 'raptor',
         ...     'N_CHUNKS': 5,
         ...     'COMPLETION_MODEL': 'gpt-3.5-turbo',
@@ -58,8 +54,6 @@ class StorySageConfig:
     """
     openai_api_key: str
     chroma_path: str
-    chroma_collection: str
-    chroma_full_text_collection: str
     raptor_collection: str
     n_chunks: int
     prompts: Dict[str, List[Dict[str, str]]] = field(default_factory=dict)
@@ -133,8 +127,6 @@ class StorySageConfig:
             config (dict): Configuration dictionary containing all required settings:
                 - OPENAI_API_KEY (str): OpenAI API authentication key
                 - CHROMA_PATH (str): Path to ChromaDB storage
-                - CHROMA_COLLECTION (str): Name of embeddings collection
-                - CHROMA_FULL_TEXT_COLLECTION (str): Name of full text collection
                 - RAPTOR_COLLECTION (str): Name of collection for raptor retrieval
                 - N_CHUNKS (int): Number of text chunks for processing
                 - COMPLETION_MODEL (str): OpenAI model name
@@ -163,7 +155,7 @@ class StorySageConfig:
             >>> print(ssconfig.redis_ex)
             3600
         """
-        required_keys = ['OPENAI_API_KEY', 'CHROMA_PATH', 'CHROMA_COLLECTION', 'CHROMA_FULL_TEXT_COLLECTION',
+        required_keys = ['OPENAI_API_KEY', 'CHROMA_PATH', 
                          'SERIES_PATH', 'ENTITIES_PATH', 'N_CHUNKS', 'REDIS_URL', 'RAPTOR_COLLECTION',
                          'REDIS_EXPIRE', 'PROMPTS_PATH', 'COMPLETION_MODEL', 'COMPLETION_TEMPERATURE',
                          'COMPLETION_MAX_TOKENS']
@@ -174,8 +166,6 @@ class StorySageConfig:
         ssconfig = StorySageConfig(
             openai_api_key=config['OPENAI_API_KEY'],
             chroma_path=config['CHROMA_PATH'],
-            chroma_collection=config['CHROMA_COLLECTION'],
-            chroma_full_text_collection=config['CHROMA_FULL_TEXT_COLLECTION'],
             n_chunks=config['N_CHUNKS'],
             completion_model=config['COMPLETION_MODEL'],
             completion_temperature=config['COMPLETION_TEMPERATURE'],
