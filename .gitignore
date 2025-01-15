@@ -23,6 +23,7 @@ prompts*.yml
 chunks/*.pickle
 chroma_data/
 *.rdb
+*.gz
 
 # Output directories
 booknlp/output/
