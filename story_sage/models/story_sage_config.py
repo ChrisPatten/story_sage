@@ -41,6 +41,7 @@ class StorySageConfig:
         ...     'CHROMA_PATH': './chromadb',
         ...     'CHROMA_COLLECTION': 'book_embeddings',
         ...     'CHROMA_FULL_TEXT_COLLECTION': 'book_texts',
+        ...     'RAPTOR_COLLECTION': 'raptor',
         ...     'N_CHUNKS': 5,
         ...     'COMPLETION_MODEL': 'gpt-3.5-turbo',
         ...     'COMPLETION_TEMPERATURE': 0.7,
@@ -59,6 +60,7 @@ class StorySageConfig:
     chroma_path: str
     chroma_collection: str
     chroma_full_text_collection: str
+    raptor_collection: str
     n_chunks: int
     prompts: Dict[str, List[Dict[str, str]]] = field(default_factory=dict)
     entities: Dict[str, StorySageEntityCollection] = field(default_factory=dict)
@@ -133,6 +135,7 @@ class StorySageConfig:
                 - CHROMA_PATH (str): Path to ChromaDB storage
                 - CHROMA_COLLECTION (str): Name of embeddings collection
                 - CHROMA_FULL_TEXT_COLLECTION (str): Name of full text collection
+                - RAPTOR_COLLECTION (str): Name of collection for raptor retrieval
                 - N_CHUNKS (int): Number of text chunks for processing
                 - COMPLETION_MODEL (str): OpenAI model name
                 - COMPLETION_TEMPERATURE (float): Model temperature setting
@@ -161,7 +164,7 @@ class StorySageConfig:
             3600
         """
         required_keys = ['OPENAI_API_KEY', 'CHROMA_PATH', 'CHROMA_COLLECTION', 'CHROMA_FULL_TEXT_COLLECTION',
-                         'SERIES_PATH', 'ENTITIES_PATH', 'N_CHUNKS', 'REDIS_URL',
+                         'SERIES_PATH', 'ENTITIES_PATH', 'N_CHUNKS', 'REDIS_URL', 'RAPTOR_COLLECTION',
                          'REDIS_EXPIRE', 'PROMPTS_PATH', 'COMPLETION_MODEL', 'COMPLETION_TEMPERATURE',
                          'COMPLETION_MAX_TOKENS']
         for key in required_keys:
@@ -176,7 +179,8 @@ class StorySageConfig:
             n_chunks=config['N_CHUNKS'],
             completion_model=config['COMPLETION_MODEL'],
             completion_temperature=config['COMPLETION_TEMPERATURE'],
-            completion_max_tokens=config['COMPLETION_MAX_TOKENS']
+            completion_max_tokens=config['COMPLETION_MAX_TOKENS'],
+            raptor_collection=config['RAPTOR_COLLECTION']
         )
 
         # Load entities from ENTITIES_PATH

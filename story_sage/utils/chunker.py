@@ -35,8 +35,8 @@ import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from kneed import KneeLocator
-from typing import TypeAlias
-
+from typing import Union, List
+import logging
 
 class ChapterData():
     def __init__(self, chapter_number: int):
@@ -92,6 +92,7 @@ class StorySageChunker:
         self.model = SentenceTransformer(model_name, local_files_only=True)
         device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
         self.model = self.model.to(device)
+        self.logger = logging.getLogger(__name__)
 
     
 
@@ -142,7 +143,7 @@ class StorySageChunker:
         final_chunks = self._merge_small_chunks(initial_chunks, embeddings, min_chunk_size)
         return final_chunks
 
-    def read_text_files(self, file_path: str) -> OrderedDict[str, BookData]:
+    def read_text_files(self, file_path: Union[str, List[str]]) -> OrderedDict[str, BookData]:
         """Reads and organizes multiple text files by book and chapter.
 
         Processes text files matching the given path pattern, extracting book
@@ -175,43 +176,47 @@ class StorySageChunker:
             >>> print(f"Chapters in book 1: {len(books['1_book.txt']['chapters'])}")
             Chapters in book 1: 12
         """
-
+        self.logger.debug(f'Reading text files from glob path: {file_path}')
         chapter_pattern = re.compile(
             r'^\s*(CHAPTER)\s+(\d+|\w+)',
             re.IGNORECASE | re.MULTILINE
         )
     
         text_dict = OrderedDict()
-        for file in glob.glob(file_path):
-            fname = os.path.basename(file)
-            book_number_match = re.match(r'^(\d+)_', fname)
-            if not book_number_match:
-                print(f'Warning: Filename "{fname}" does not start with a number followed by an underscore.')
-                continue
-            book_number = int(book_number_match.group(1))
-            print(f'Name: {fname} Book Number: {book_number}')
-            with open(file, 'r') as f:
-                book_info = BookData(book_number)
-                content = f.read()
-                content = re.sub(chapter_pattern, r'\1 \2', content)
-                chapter_number = 0
-                for line in content.split('\n'):
-                    line = line.strip()
-                    if len(line) == 0:
-                        continue
-                    if re.match(chapter_pattern, line):
-                        chapter_number += 1
-                        if chapter_number not in book_info.chapters.keys():
-                            book_info.chapters[chapter_number] = ChapterData(chapter_number)
-                    if re.match(r'GLOSSARY', line, re.IGNORECASE):
-                        break
-                    line = re.sub(chapter_pattern, '', line)
-                    # Strip all non-alphanumeric characters from the beginning of the line
-                    line = re.sub(r'^\W+', '', line)
-                    book_info.chapters[chapter_number].lines.append(line)
-                    book_info.chapters[chapter_number].full_text += line + ' '
-                text_dict[fname] = book_info
-                print(f'Book {book_number} has {len(book_info.chapters)} chapters (0 indexed to include prologue).')
+        if isinstance(file_path, str):
+            file_path = [file_path]
+        for path in file_path:
+            for file in glob.glob(path):
+                fname = os.path.basename(file)
+                self.logger.debug(f'Reading file: {fname}')
+                book_number_match = re.match(r'^(\d+)_', fname)
+                if not book_number_match:
+                    print(f'Warning: Filename "{fname}" does not start with a number followed by an underscore.')
+                    continue
+                book_number = int(book_number_match.group(1))
+                print(f'Name: {fname} Book Number: {book_number}')
+                with open(file, 'r') as f:
+                    book_info = BookData(book_number)
+                    content = f.read()
+                    content = re.sub(chapter_pattern, r'\1 \2', content)
+                    chapter_number = 0
+                    for line in content.split('\n'):
+                        line = line.strip()
+                        if len(line) == 0:
+                            continue
+                        if re.match(chapter_pattern, line):
+                            chapter_number += 1
+                            if chapter_number not in book_info.chapters.keys():
+                                book_info.chapters[chapter_number] = ChapterData(chapter_number)
+                        if re.match(r'GLOSSARY', line, re.IGNORECASE):
+                            break
+                        line = re.sub(chapter_pattern, '', line)
+                        # Strip all non-alphanumeric characters from the beginning of the line
+                        line = re.sub(r'^\W+', '', line)
+                        book_info.chapters[chapter_number].lines.append(line)
+                        book_info.chapters[chapter_number].full_text += line + ' '
+                    text_dict[fname] = book_info
+                    print(f'Book {book_number} has {len(book_info.chapters)} chapters (0 indexed to include prologue).')
         return text_dict
 
     def _add_context(self, sentences: list, window_size: int) -> list:

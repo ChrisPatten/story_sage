@@ -1,11 +1,15 @@
 # Import necessary libraries and modules
 import logging  # For logging debug information
-from typing import List  # For type annotations
-import chromadb  # ChromaDB client for vector storage and retrieval
-from chromadb import Documents, EmbeddingFunction, Embeddings, GetResult, QueryResult
-import logging
-from sentence_transformers import SentenceTransformer
+from typing import List, Union  # For type annotations
 import torch
+import numpy as np
+from sentence_transformers import SentenceTransformer
+import chromadb  # ChromaDB client for vector storage and retrieval
+from chromadb import Documents, EmbeddingFunction, Embeddings
+from chromadb.api import Collection
+from chromadb.api.types import GetResult, QueryResult
+from story_sage.utils import Chunk, ChunkMetadata
+from story_sage.utils.raptor import _RaptorResults, RaptorProcessor
 
 
 class StorySageEmbedder(EmbeddingFunction):
@@ -31,7 +35,7 @@ class StorySageEmbedder(EmbeddingFunction):
         ]
     """
 
-    def __init__(self, model_name: str = 'all-MiniLM-L6-v2', *args, **kwargs):
+    def __init__(self, model_name: str = 'sentence-transformers/all-mpnet-base-v1', *args, **kwargs):
         """Initializes the StorySageEmbedder with a specified SentenceTransformer model.
 
         Args:
@@ -47,6 +51,9 @@ class StorySageEmbedder(EmbeddingFunction):
         self.device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
         # Move the model to the selected device
         self.model = self.model.to(self.device)
+
+        if 'log_level' in kwargs:
+            self.logger.setLevel(kwargs['log_level'])
 
     def __call__(self, input: Documents) -> Embeddings:
         """Generates embeddings for the provided documents.
@@ -102,7 +109,7 @@ class StorySageRetriever:
         ]
     """
 
-    def __init__(self, chroma_path: str, chroma_collection_name: str,
+    def __init__(self, chroma_path: str = None, chroma_collection_name: str = None,
                  n_chunks: int = 5, logger: logging.Logger = None):
         """Initializes the StorySageRetriever with necessary configuration.
 
@@ -117,9 +124,13 @@ class StorySageRetriever:
         # Initialize the embedding function using StorySageEmbedder
         self.embedder = StorySageEmbedder()
         # Set up the ChromaDB client with persistent storage at the specified path
-        self.chroma_client = chromadb.PersistentClient(path=chroma_path)
+        if chroma_path is not None:
+            self.chroma_client = chromadb.PersistentClient(path=chroma_path)
+        else:
+            self.chroma_client = chromadb.EphemeralClient()
         # Get the vector store collection from ChromaDB using the embedder
-        self.vector_store = self.chroma_client.get_collection(
+        chroma_collection_name = chroma_collection_name or 'story_sage_collection'
+        self.vector_store = self.chroma_client.get_or_create_collection(
             name=chroma_collection_name,
             embedding_function=self.embedder
         )
@@ -163,8 +174,10 @@ class StorySageRetriever:
         # Log the incoming query and filters for debugging
         self.logger.debug(f"Retrieving chunks with query: {query_str}, context_filters: {context_filters}")
 
+        if not context_filters:
+            raise ValueError("Context filters are required to retrieve relevant chunks.")
+
         combined_filter = self.get_where_filter(context_filters)
-        fallback_filter = self.get_where_filter(context_filters, include_entities=False)
         # Log the combined filter being used for the query
         self.logger.debug(f"Combined filter: {combined_filter}")
 
@@ -175,18 +188,6 @@ class StorySageRetriever:
             include=['metadatas', 'documents'],  # Include metadata and documents in the results
             where=combined_filter  # Apply the combined filter
         )
-
-        # If no results are found, retry the query without entity filters
-        if len(query_result) == 0:
-            # Log that we are retrying the query without entity filters
-            self.logger.debug("Retrying query without entity filters")
-            # Query the vector store again without entity filters
-            query_result = self.vector_store.query(
-                query_texts=[query_str],  # The user's query
-                n_results=self.n_chunks,  # Number of results to return
-                include=['metadatas', 'documents'],  # Include metadata and documents in the results
-                where=fallback_filter  # Apply the fallback filter
-            )
 
         # Log the retrieved documents for debugging purposes
         self.logger.debug(f"Retrieved documents: {query_result}")
@@ -218,19 +219,18 @@ class StorySageRetriever:
             >>> result = retriever.get_by_keyword(['sword', 'castle'], context)
             >>> print(result['documents'])  # Texts containing 'sword' or 'castle'
         """
-        where_filter = self.get_where_filter(context_filters=context_filters,
-                                             include_entities=False)
+        where_filter = self.get_where_filter(context_filters=context_filters)
         keywords_dict_list = [{'$contains': str.lower(keyword)} for keyword in keywords]
-        and_where_doc = None
         if len(keywords_dict_list) > 1:
-            and_where_doc = {'$and': keywords_dict_list}
-            or_where_doc = {'$or': keywords_dict_list}
+            where_doc = {'$or': keywords_dict_list}
+        else:
+            where_doc = keywords_dict_list[0]
 
         query_result = self.vector_store.get(
             limit=self.n_chunks,
             include=['metadatas', 'documents'],
             where=where_filter,
-            where_document= or_where_doc or keywords_dict_list
+            where_document=where_doc
         )
 
         self.logger.debug(f"Retrieved documents: {query_result}")
@@ -238,7 +238,7 @@ class StorySageRetriever:
         
         
     
-    def get_where_filter(self, context_filters: dict, include_entities: bool = True) -> dict:
+    def get_where_filter(self, context_filters: dict) -> dict:
         """Constructs a filter dictionary for ChromaDB queries.
 
         Creates a complex filter that ensures retrieved chunks are from either:
@@ -264,14 +264,20 @@ class StorySageRetriever:
             >>> print(filter_dict)
             # Outputs a complex nested dictionary for ChromaDB filtering
         """
-        combined_filter = {'series_id': int(context_filters.get('series_id'))}  # Initialize the combined filter dictionary
+
+        def _safe_add_and(filter: dict, new_item: dict) -> dict:
+            if '$and' in filter.keys():
+                filter['$and'].append(new_item)
+                return filter
+            else:
+                return {'$and': [filter, new_item]}
 
         # Extract book and chapter numbers, if present
         book_number = context_filters.get('book_number')
         chapter_number = context_filters.get('chapter_number')
 
         # Build a filter to retrieve documents from earlier books or chapters
-        book_chapter_filter = {
+        where_filter = {
             '$or': [
                 {'book_number': {'$lt': book_number}},  # Books before the current one
                 {'$and': [  # Chapters before the current one in the same book
@@ -281,31 +287,73 @@ class StorySageRetriever:
             ]
         }
 
-        # Combine filters for book and chapter
-        combined_filter = {'$and': [combined_filter, book_chapter_filter]}
+        # Add additional filters as necessary
+        if 'series_id' in context_filters:
+            where_filter = _safe_add_and(where_filter, {'series_id': int(context_filters.get('series_id'))})
 
+        # The following filters act as flags (default to False unless set otherwise)
+        if context_filters.get('summaries_only', False):
+            where_filter = _safe_add_and(where_filter, {'is_summary': True})
+
+        if context_filters.get('top_level_only', False):
+            where_filter = _safe_add_and(where_filter, {'is_top_level': True})
+
+        if context_filters.get('exclude_summaries', False):
+            where_filter = _safe_add_and(where_filter, {'is_summary': False})
+        
         # Build filters based on entities like people, places, groups, and animals
         entity_filters = []
         if len(context_filters.get('entities', [])) > 0:
             for entity_id in context_filters['entities']:
-                entity_filter = {entity_id: True}
-                entity_filters.append(entity_filter)
+                where_filter = _safe_add_and(where_filter, {'entities': entity_id})
 
-        # Combine entity filters if any exist
-        if not include_entities:
-            entity_filters = []
+        return where_filter
+    
+    def _recursive_retrieve_from_hierarchy(self, parent_ids: List[str]) -> List[str]:
 
-        if len(entity_filters) == 1:
-            entity_meta_filter = entity_filters[0]
-        elif len(entity_filters) == 0:
-            pass
+        parents = self.vector_store.get(
+            ids=parent_ids,
+            include=['metadatas']
+        )
+
+        children_ids = set()
+        for parent_metadata in parents['metadatas']:
+            for metadata in parent_metadata:
+                children_ids.update(self._recursive_retrieve_from_hierarchy(metadata['children'].split(',')))
+
+        children_ids = list(children_ids)
+        
+        if len(children_ids) == 0:
+            return parent_ids
         else:
-            # Use an '$and' clause to require all entity conditions
-            entity_meta_filter = {'$and': entity_filters}
-            # Add entity filters to the combined filter
-            combined_filter = {'$and': [combined_filter, entity_meta_filter]} if combined_filter else entity_meta_filter
+            return children_ids
+    
+    def retrieve_from_hierarchy(self, parent_ids: List[str]) -> QueryResult:
+        """Finds top-level text chunks, then returns the lowest level children for each of the n_top_level summaries.
 
-        return combined_filter
+        Args:
+            context_filters (dict): Filters to narrow down the search scope, containing:
+                - book_number (int): The current book number
+                - chapter_number (int): The current chapter number
+                - series_id (int): The ID of the book series
+                - entities (list, optional): List of entity IDs to filter by
+            n_top_level (int): Number of top-level summaries to retrieve
+
+        Returns:
+            QueryResult: A ChromaDB query result containing:
+                - documents: List of text chunks containing the top-level summaries
+                - metadatas: List of metadata for each chunk
+                - ids: Unique IDs for each chunk
+
+        """
+        children_ids = self._recursive_retrieve_from_hierarchy(parent_ids)
+        
+        results = self.vector_store.get(
+            ids=children_ids,
+            include=['metadatas']
+        )
+
+        return results
 
     def first_pass_query(self, query_str: str, context_filters: dict) -> dict[str, str]:
         """Performs a broader initial query to get a larger set of potentially relevant chunks.
@@ -362,3 +410,95 @@ class StorySageRetriever:
         self.logger.debug(f'Retrieving documents by IDs: {ids}')
         results = self.vector_store.get(ids=ids, include=['metadatas'])
         return results
+
+    def load_processed_files(self, chunk_tree: Union[_RaptorResults, str], series_id: int) -> None:
+        """Loads processed files from RaptorProcessor into the vector store.
+
+        Takes the output from RaptorProcessor's process_texts() method or a JSON file path
+        and inserts all chunks into the ChromaDB collection, preserving embeddings 
+        and metadata.
+
+        Args:
+            chunk_tree: Either:
+                - _RaptorResults: Direct output from RaptorProcessor
+                - str: Path to JSON or JSON.gz file
+
+        Example:
+            >>> processor = RaptorProcessor('config.yaml')
+            >>> results = processor.process_texts('./books/*.txt')
+            >>> retriever = StorySageRetriever()
+            >>> retriever.load_processed_files(results)  # From RaptorResults
+            >>> retriever.load_processed_files('chunks.json.gz')  # From compressed JSON
+            >>> retriever.load_processed_files('chunks.json')  # From JSON file
+        """
+        self.logger.debug("Loading processed files into vector store")
+        
+        raptor_chunks: _RaptorResults = None
+
+        # Handle different input types
+        if isinstance(chunk_tree, str):
+            raptor_chunks = RaptorProcessor.load_chunk_tree(chunk_tree)
+        else:
+            raptor_chunks = chunk_tree
+        
+        # Process the chunk tree
+        for book_filename, book_data in raptor_chunks.items():
+            for chapter_key, chapter_data in book_data.items():
+                for level_key, chunks in chapter_data.items():
+                    # Prepare batch data
+                    ids = []
+                    documents = []
+                    metadatas = []
+                    embeddings = []
+                    
+                    for chunk in chunks:
+                        # Skip if this chunk is already in the collection
+                        try:
+                            if chunk.chunk_key in self.vector_store.get(ids=[chunk.chunk_key])['ids']:
+                                continue
+                        except Exception:  # Handle case where chunk doesn't exist
+                            pass
+
+                        if not chunk.chunk_key.startswith('series_'):
+                            chunk.chunk_key = f'series_{series_id}|{chunk.chunk_key}'
+                            
+                        ids.append(chunk.chunk_key)
+                        documents.append(str.lower(chunk.text))
+                        
+                        # Prepare metadata
+                        metadata = chunk.metadata.__dict__.copy()
+                        metadata['book_filename'] = book_filename
+                        metadata['is_summary'] = chunk.is_summary
+                        metadata['parents'] = ','.join(chunk.parents)
+                        metadata['children'] = ','.join(chunk.children)
+                        metadata['full_chunk'] = chunk.text
+                        metadata['series_id'] = series_id
+                        metadatas.append(metadata)
+                        
+                        if chunk.embedding is not None:
+                            embeddings.append(chunk.embedding.tolist())
+                    
+                    if not ids:  # Skip if no new chunks to add
+                        continue
+                        
+                    # Add to collection with or without embeddings
+                    try:
+                        if embeddings:
+                            self.vector_store.add(
+                                ids=ids,
+                                documents=documents,
+                                metadatas=metadatas,
+                                embeddings=embeddings
+                            )
+                        else:
+                            self.vector_store.add(
+                                ids=ids,
+                                documents=documents,
+                                metadatas=metadatas
+                            )
+                        
+                        self.logger.debug(f"Added {len(ids)} chunks from {book_filename} {chapter_key} {level_key}")
+                    except Exception as e:
+                        self.logger.error(f"Error adding chunks: {e}")
+                        raise
+

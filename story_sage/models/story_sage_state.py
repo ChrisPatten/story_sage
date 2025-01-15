@@ -42,6 +42,7 @@ class StorySageState():
     book_number: int
     chapter_number: int
     series_id: int
+    summary_chunks: List[dict] = field(default_factory=list)  # RAPTOR top level summaries
     context_filters: dict = field(default_factory=dict)  # Filters for context retrieval
     initial_context: List[dict] = field(default_factory=list)  # Initial list of chunk IDs based on search of summaries
     target_ids: List[str] = field(default_factory=list)  # Specific chunks to get full text from

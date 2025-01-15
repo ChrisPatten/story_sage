@@ -644,7 +644,7 @@ class RaptorProcessor:
             if target_level_key in level_keys:
                 chunk_list = chunks[target_level_key]
             else:
-                raise ValueError(f"Level {level} not found in chunks for chapter {chapter_num} in book {book_number}")
+                raise ValueError(f"Level {level} not found in chunks for chapter {chapter_num} in book {'book_number'}")
 
             # Initialize next level list if needed
             if level + 1 <= number_of_levels:
@@ -753,7 +753,7 @@ class RaptorProcessor:
                 print(f"Finished processing {chapter_key} for book {book_tree['shared_tree_key']}")
             return chunks
 
-    def _get_chunks_from_filepath(self, file_path: str) -> OrderedDict[str, list[list[Chunk]]]:
+    def _get_chunks_from_filepath(self, file_path: Union[str, List[str]]) -> OrderedDict[str, list[list[Chunk]]]:
         """Loads and chunks text files into a hierarchical structure.
 
         Processes one or more text files matching the given path pattern,
@@ -785,7 +785,7 @@ class RaptorProcessor:
         chunked_text: OrderedDict[str, list[list[Chunk]]] = {}
         input_text = self.chunker.read_text_files(file_path)
         if len(input_text) < 1:
-            raise ValueError("No text found in the provided file path.")
+            raise ValueError(f"No text found in file path {file_path}")
         for book_filename, book_info in sorted(input_text.items()):
             chunked_text[book_filename] = []
             for chapter_num, chapter_data in book_info.chapters.items():
@@ -801,7 +801,7 @@ class RaptorProcessor:
                 chunked_text[book_filename].append(chunk_list)
         return chunked_text
 
-    def process_texts(self, file_path: str, max_levels: int = None, 
+    def process_texts(self, file_path: Union[str, List[str]], max_levels: int = None, 
                       max_processes: int = None, max_summary_threads: int = None
                      ) -> _RaptorResults:
         """Process text files into a multi-level hierarchical summary structure.
@@ -873,59 +873,79 @@ class RaptorProcessor:
                     for chapter_num, chapter_data in enumerate(book_info)
                 ]
                 
-                with Pool(processes=n_processes) as pool:
+                with Pool(processes=n_processes, maxtasksperchild=5) as pool:
                     for book_tree in pool.imap(_process_chapter_worker, process_args):
                         self.chunk_tree[book_filename] = dict(book_tree)
 
         return self.chunk_tree
 
     def save_chunk_tree(self, output_path: str, compress: bool = True) -> None:
-        """Save the chunk tree to a JSON file, optionally compressed.
+        """Save each book in the chunk tree to a separate JSON file, optionally compressed.
+
+        The output filename will include the book number from the first chunk's metadata.
+        Example: For output_path 'data.json' and book_number 1, creates 'data_1.json'
+        Each file maintains the original book_filename as the top-level key for compatibility.
 
         Args:
-            output_path (str): Path where to save the file
+            output_path (str): Base path where to save the files
             compress (bool, optional): Whether to use gzip compression. Defaults to True.
                                     If True, '.gz' extension will be added if not present.
         """
         import json
         
-        # Handle compression extension
-        path = pathlib.Path(output_path)
-        if compress and path.suffix != '.gz':
-            output_path = str(path.with_suffix(path.suffix + '.gz'))
-        
-        def chunk_tree_to_json(chunk_tree: Dict[str, Dict[str, _LevelsDict]]) -> dict:
-            """Convert the chunk tree to a JSON-serializable dictionary."""
-            json_tree = {}
-            for book_filename, book_data in chunk_tree.items():
-                json_tree[book_filename] = {}
-                for chapter_key, chapter_data in book_data.items():
-                    json_tree[book_filename][chapter_key] = {}
-                    for level_key, level_data in chapter_data.items():
-                        json_tree[book_filename][chapter_key][level_key] = [
-                            chunk.to_json() for chunk in level_data
-                        ]
-            return json_tree
+        def chunk_tree_to_json(book_filename: str, book_data: Dict[str, _LevelsDict]) -> dict:
+            """Convert a single book's data to a JSON-serializable dictionary."""
+            return {
+                book_filename: {
+                    chapter_key: {
+                        level_key: [chunk.to_json() for chunk in level_data]
+                        for level_key, level_data in chapter_data.items()
+                    }
+                    for chapter_key, chapter_data in book_data.items()
+                }
+            }
 
         if self.chunk_tree is None:
             raise ValueError("No chunk tree to save. Run process_texts() first.")
 
-        # Use minimal JSON for compressed files, pretty print for uncompressed
-        json_data = json.dumps(
-            chunk_tree_to_json(self.chunk_tree),
-            indent=None if compress else 2,  # No indentation for compressed
-            separators=(',', ':') if compress else (', ', ': '),  # Minimal separators for compressed
-            ensure_ascii=False  # Avoid escaping non-ASCII characters
-        )
+        # Handle base path
+        path = pathlib.Path(output_path)
+        base_stem = path.stem
+        base_suffix = '.gz' if compress else ''
         
-        if compress:
-            with gzip.open(output_path, 'wt', encoding='utf-8', compresslevel=9) as f:
-                f.write(json_data)
-        else:
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(json_data)
+        # Process each book separately
+        for book_filename, book_data in self.chunk_tree.items():
+            # Get book number from first chunk of first chapter
+            first_chapter = next(iter(book_data.values()))
+            first_level = first_chapter.get('level_1', [])
+            if not first_level:
+                print(f"Warning: No chunks found for {book_filename}, skipping...")
+                continue
+                
+            book_number = first_level[0].metadata.book_number
+            
+            # Construct output filename with book number
+            output_filename = f"{base_stem}_{book_number}{path.suffix}{base_suffix}"
+            output_filepath = str(path.parent / output_filename)
+            
+            # Convert book data to JSON, maintaining book_filename as top key
+            json_data = json.dumps(
+                chunk_tree_to_json(book_filename, book_data),
+                indent=None if compress else 2,
+                separators=(',', ':') if compress else (', ', ': '),
+                ensure_ascii=False
+            )
+            
+            # Save the file
+            if compress:
+                with gzip.open(output_filepath, 'wt', encoding='utf-8', compresslevel=9) as f:
+                    f.write(json_data)
+            else:
+                with open(output_filepath, 'w', encoding='utf-8') as f:
+                    f.write(json_data)
 
-    def load_chunk_tree(self, input_path: str) -> None:
+    @staticmethod
+    def load_chunk_tree(input_path: str) -> _RaptorResults:
         """Load a chunk tree from a JSON file, automatically handling compression.
 
         Args:
@@ -962,7 +982,7 @@ class RaptorProcessor:
 
         if is_compressed:
             with gzip.open(input_path, 'rt', encoding='utf-8') as f:
-                self.chunk_tree = json_to_chunk_tree(json.load(f))
+                return json_to_chunk_tree(json.load(f))
         else:
             with open(input_path, 'r', encoding='utf-8') as f:
-                self.chunk_tree = json_to_chunk_tree(json.load(f))
+                return json_to_chunk_tree(json.load(f))
