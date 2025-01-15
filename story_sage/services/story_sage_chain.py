@@ -79,9 +79,10 @@ class StorySageChain:
 
         if self._is_followup_question():
             self.logger.debug('Question is a followup')
-            if self._get_context_from_followup():
-                if self._generate():
-                    return self.state
+            if self._refine_followup_question():
+                if self._get_context_from_followup():
+                    if self._generate():
+                        return self.state
 
         # Generate an optimized query for vector search
         if not self._generate_search_query():
@@ -265,11 +266,11 @@ class StorySageChain:
             self._add_usage(tokens)
             if not has_answer and follow_up:
                 self.needs_clarification = True
-                self.state.answer = follow_up
+                self.state.answer = response + '\n\n\n' + follow_up
                 return True
             
             self.needs_clarification = False
-            self.state.answer = (response + '\n\n' + follow_up) if follow_up else response
+            self.state.answer = (response + '\n\n\n' + follow_up) if follow_up else response
             return has_answer
         except Exception as e:
             self.logger.error(f'Error generating response: {e}')
@@ -321,7 +322,10 @@ class StorySageChain:
 
     def _is_followup_question(self) -> bool:
         """Check if current question is a followup based on conversation history."""
-        return len(self.state.conversation.get_history()) > 0
+        if self.state.conversation:
+            return len(self.state.conversation.get_history()) > 0
+        else:
+            return False
 
     def _get_context_from_followup(self) -> bool:
         """Get context using followup query based on conversation history.
@@ -338,18 +342,38 @@ class StorySageChain:
             self._add_usage(tokens)
             self.logger.debug(f'Generated followup query: {query}')
             
-            chunks = self.raptor_retriever.retrieve_chunks(
+            result: QueryResult = self.raptor_retriever.retrieve_chunks(
                 query_str=query,
                 context_filters=self.state.context_filters
             )
-            if not chunks:
+            if not result:
                 self.logger.debug('No chunks found from followup query')
                 return False
                 
-            self.state.context_chunks = chunks
+            self.state.context = self._get_context_from_result(result)
             return True
         except Exception as e:
             self.logger.error(f'Error in followup query: {e}')
+            return False
+
+    def _refine_followup_question(self) -> bool:
+        """Refine the follow-up question using LLM based on conversation history.
+        
+        Returns:
+            bool: True if refinement was successful
+        """
+        self.state.node_history.append('RefineFollowupQuestion')
+        try:
+            refined_question, tokens = self.llm.refine_followup_question(
+                question=self.state.question,
+                conversation=self.state.conversation
+            )
+            self._add_usage(tokens)
+            self.state.question = refined_question
+            self.logger.debug(f'Refined follow-up question: {refined_question}')
+            return True
+        except Exception as e:
+            self.logger.error(f'Error refining follow-up question: {e}')
             return False
 
     # Helper methods

@@ -57,6 +57,24 @@ class StorySageContext:
             chapter_number=data['chapter_number'],
             chunk=data['chunk']
         )
+    
+    def to_dict(cls) -> dict:
+        """Converts the StorySageContext instance to a dictionary.
+
+        Returns:
+            dict: A dictionary representation of the StorySageContext instance.
+
+        Example:
+            >>> context = StorySageContext("b1_ch1_001", 1, 1, "Once upon a time...")
+            >>> context.to_dict()
+            {'chunk_id': 'b1_ch1_001', 'book_number': 1, 'chapter_number': 1, 'chunk': 'Once upon a time...'}
+        """
+        return {
+            'chunk_id': cls.chunk_id,
+            'book_number': cls.book_number,
+            'chapter_number': cls.chapter_number,
+            'chunk': cls.chunk
+        }
 
     def format_for_llm(self) -> str:
         """Formats the context for input to a Language Learning Model (LLM).

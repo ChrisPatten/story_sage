@@ -1,45 +1,45 @@
-# - series_number: 2
-#   book_numbers:
-#     - 1
-#     - 7
-#   question_list:
-    # - What is Harry's aunt and uncle's address?
-    # - What is the name for a person who can talk to snakes?
-    # - How does Hermione's attitude toward house rules change from when we first meet her to now?
-    # - What events led to Harry joining the Quidditch team?
-    # - Based on what we've seen so far, why might the Sorting Hat have considered putting Harry in Slytherin?
-    # - What do we know about the Chamber of Secrets?
-    # - Why does Dumbledore decide to have Harry grow up with the Dursleys rather than with one of the wizard families? How does Harry’s experience with his relatives build his character?
-    # - Why does it take so long for Harry’s wand to choose him when he visits Diagon Alley? What is special about his wand? Why does Ollivander say, “The wand chooses the wizard”?
-    # - When Harry first meets Malfoy, he reminds him of Dudley. How are these two alike? How are they different?
-    # - Why do Harry and Ron dislike Hermione in the beginning? How does their friendship with her grow? What qualities and strengths does each of them bring to their adventures?
-    # - Why does Dumbledore give Harry the Cloak of Invisibility? Why is the Cloak so important to Harry?
-    # - |
-    #   Discuss the importance of the Mirror of Erised and the meaning of its name. Dumbledore tells Harry: “It shows us nothing more or less than the deepest, most desperate desire of our hearts . . . However, this mirror will give us neither knowledge or truth.” (p. 213) What does he mean by this? What would you see if you looked in the mirror?
-    # - Why do you think Harry and Professor Snape dislike each other so much?
-
-- series_number: 3
+- series_number: 2
   book_numbers:
     - 1
-    #- 9
+    - 7
   question_list:
-    - what is rand's horse's name?
-    - who is the daughter of the nine moons?
-    - who told mat he would marry the daughter of the nine moons?
-    - where is the horn of valere?
-    - where was the horn of valere found?
-    - what is the tower of ghenjei?
-    - what is the name of the aielman that perrin meets?
-    - how does rand and mat's relationship change after shadar logoth?
+    - What is Harry's aunt and uncle's address?
+    - What is the name for a person who can talk to snakes?
+    - How does Hermione's attitude toward house rules change from when we first meet her to now?
+    - What events led to Harry joining the Quidditch team?
+    - Based on what we've seen so far, why might the Sorting Hat have considered putting Harry in Slytherin?
+    - What do we know about the Chamber of Secrets?
+    - Why does Dumbledore decide to have Harry grow up with the Dursleys rather than with one of the wizard families? How does Harry’s experience with his relatives build his character?
+    - Why does it take so long for Harry’s wand to choose him when he visits Diagon Alley? What is special about his wand? Why does Ollivander say, “The wand chooses the wizard”?
+    - When Harry first meets Malfoy, he reminds him of Dudley. How are these two alike? How are they different?
+    - Why do Harry and Ron dislike Hermione in the beginning? How does their friendship with her grow? What qualities and strengths does each of them bring to their adventures?
+    - Why does Dumbledore give Harry the Cloak of Invisibility? Why is the Cloak so important to Harry?
+    - |
+      Discuss the importance of the Mirror of Erised and the meaning of its name. Dumbledore tells Harry: “It shows us nothing more or less than the deepest, most desperate desire of our hearts . . . However, this mirror will give us neither knowledge or truth.” (p. 213) What does he mean by this? What would you see if you looked in the mirror?
+    - Why do you think Harry and Professor Snape dislike each other so much?
 
-    - What's the name of the mare accompanying Rand al'Thor and his father in the opening scene of the book?
-    - What's the last name of Elyas?
-    - What's the name of the village resident who complains to the mayor about the absence of storks at Bel Tine?
-    - What's the name of the innkeeper of Stag and Lion inn?
-    - What's the name of the valley where Trolloc weapons are forged?
-    - What's the name of Aram's grandmother?
-    - What entity keeps the Trollocs from entering Shadar Logoth?
-    - What's the name of the philosophy followed by the Tuatha'an?
-    - What is the Trolloc name for the Father of Lies that means "Heart of the Dark"?
-    - What did Aram gift to Egwene when she was camping with the Tuatha'an?
+# - series_number: 3
+#   book_numbers:
+#     - 1
+#     - 9
+#   question_list:
+#     - what is rand's horse's name?
+#     - who is the daughter of the nine moons?
+#     - who told mat he would marry the daughter of the nine moons?
+#     - where is the horn of valere?
+#     - where was the horn of valere found?
+#     - what is the tower of ghenjei?
+#     - what is the name of the aielman that perrin meets?
+#     - how does rand and mat's relationship change after shadar logoth?
+
+#     - What's the name of the mare accompanying Rand al'Thor and his father in the opening scene of the book?
+#     - What's the last name of Elyas?
+#     - What's the name of the village resident who complains to the mayor about the absence of storks at Bel Tine?
+#     - What's the name of the innkeeper of Stag and Lion inn?
+#     - What's the name of the valley where Trolloc weapons are forged?
+#     - What's the name of Aram's grandmother?
+#     - What entity keeps the Trollocs from entering Shadar Logoth?
+#     - What's the name of the philosophy followed by the Tuatha'an?
+#     - What is the Trolloc name for the Father of Lies that means "Heart of the Dark"?
+#     - What did Aram gift to Egwene when she was camping with the Tuatha'an?
 

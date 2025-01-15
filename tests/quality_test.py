@@ -45,7 +45,7 @@ file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.DEBUG)
+console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(formatter)
 #logger.addHandler(console_handler)
 

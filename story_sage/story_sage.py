@@ -176,7 +176,8 @@ class StorySage:
             
             # Log the results
             self.logger.debug(f"Generated answer: {result.answer}")
-            self.logger.debug(f"Retrieved context: {result.context}")
+            self.logger.debug(f"Retrieved context: {len(result.context)}")
+            self.logger.info(f"Turn cost: {result.get_cost()}")
             
             return result.answer, result.context, None, result.entities
             

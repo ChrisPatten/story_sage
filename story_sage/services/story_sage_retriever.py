@@ -190,7 +190,7 @@ class StorySageRetriever:
         )
 
         # Log the retrieved documents for debugging purposes
-        self.logger.debug(f"Retrieved documents: {query_result}")
+        self.logger.debug(f"Retrieved documents: {query_result['ids']}")
         # Return the query results
         return query_result
     
@@ -233,7 +233,7 @@ class StorySageRetriever:
             where_document=where_doc
         )
 
-        self.logger.debug(f"Retrieved documents: {query_result}")
+        self.logger.debug(f"Retrieved documents: {query_result['ids']}")
         return query_result
         
         

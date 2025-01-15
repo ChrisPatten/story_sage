@@ -284,6 +284,45 @@ class StorySageLLM:
         except Exception as e:
             raise Exception(f"Error getting completion from OpenAI: {str(e)}")
 
+    def refine_followup_question(self, question: str, conversation: StorySageConversation,
+                                 model: str = None, **kwargs) -> Tuple[str, _UsageType]:
+        """Refines the user's follow-up question based on the context of the conversation.
+
+        Args:
+            question (str): Current follow-up question to refine
+            conversation (StorySageConversation): Previous conversation history
+            model (str, optional): OpenAI model to use. Defaults to config's model
+            **kwargs: Additional arguments passed to OpenAI API
+
+        Returns:
+            Tuple[str, _UsageType]: Contains:
+                - refined_question: Refined follow-up question
+                - tokens: Number of tokens used in the turn
+
+        Raises:
+            Exception: If OpenAI API call fails
+        """
+        
+        class RefinedQuestionResult(BaseModel):
+            refined_question: str
+
+        messages = self._set_up_prompt('refine_followup_question', {
+            'history': conversation,
+            'question': question
+        })
+
+        try:
+            response = self.client.beta.chat.completions.parse(
+                model=model or self.config.completion_model,
+                messages=messages,
+                response_format=RefinedQuestionResult
+            )
+            result: RefinedQuestionResult = response.choices[0].message.parsed
+            tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
+            return result.refined_question, tokens
+        except Exception as e:
+            raise Exception(f"Error getting completion from OpenAI: {str(e)}")
+
     
     def _get_conversation_turns(self, conversation: StorySageConversation) -> List[Dict[str, str]]:
         """Formats conversation history into OpenAI message format.

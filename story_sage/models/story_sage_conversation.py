@@ -37,7 +37,7 @@ class TurnType():
         Args:
             question (str): The user's question or input.
             detected_entities (List[str]): List of entities detected in the question.
-            context (List[str]): Relevant context used for generating the response.
+            context (List[StorySageContext]): Relevant context used for generating the response.
             response (str): The system's response to the question.
             sequence (int): Position of this turn in the conversation (0-based).
         """
@@ -57,14 +57,24 @@ class TurnType():
             return {
                 'question': self.question,
                 'detected_entities': self.detected_entities,
-                'context': [c.format_for_llm() for c in self.context],
+                'context': [c.to_dict() for c in self.context],
                 'response': self.response,
                 'sequence': self.sequence
             }
         except Exception as e:
-            logger.error(f"Error converting turn to JSON: {e}")
-            logger.error(self.detected_entities)
+            logger.error("Error converting turn to JSON", exc_info=True, stack_info=True, stacklevel=50)
             raise e
+        
+    @property
+    def context(self):
+        return self._context
+
+    @context.setter
+    def context(self, value: List[StorySageContext]):
+        # Intercept the setting of context here
+        if not type(value) == list and type(value[0]) == StorySageContext:
+            raise ValueError("Context must be a list of StorySageContext objects")
+        self._context = value
 
 class StorySageConversation():
     """Manages a conversation session in the StorySage system with persistence support.
@@ -189,6 +199,8 @@ class StorySageConversation():
         data = self.redis.get(key)
         if data:
             turns = json.loads(data)
+            for turn in turns:
+                turn['context'] = [StorySageContext.from_dict(c) for c in turn['context']]
             return [TurnType(turn['question'], turn['detected_entities'], turn['context'], turn['response'], turn['sequence']) for turn in turns]
         else:
             return []

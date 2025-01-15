@@ -39,9 +39,22 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 app = Flask(__name__)
 CORS(app)  # Enable Cross-Origin Resource Sharing for all routes
 
-# Configure logging
+
+def get_loggers_by_prefix(prefix: str) -> list[logging.Logger]:
+    loggers = []
+    for name, logger in logging.Logger.manager.loggerDict.items():
+        if isinstance(logger, logging.Logger) and name.startswith(prefix):
+            loggers.append(logger)
+    return loggers
+
+
 logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)  # Set the logging level to DEBUG for detailed output
+logger.setLevel(logging.WARN)
+loggers_with_prefix = get_loggers_by_prefix('story_sage')
+for component_logger in loggers_with_prefix:
+    component_logger.setLevel(logging.DEBUG) 
+
+# Configure logging
 
 # Set up logging formatter and handler
 log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -131,7 +144,7 @@ def invoke_story_sage():
         result, context, request_id, entities = story_sage.invoke(**payload)
         try:
             conversation.add_turn(question=data['question'], detected_entities=entities, 
-                                context=context, response=result, request_id=request_id)
+                                context=context, response=result)
         except Exception as e:
             logger.error(f"Error adding turn to conversation: {e}")
             raise e
@@ -199,6 +212,9 @@ def feedback():
         # Log the error and return a server error response
         logger.error(f"Error processing feedback: {e}")
         return jsonify({'error': 'Internal server error.'}), 500
+    finally:
+        if e:
+            raise e
     
 @app.route('/images/<filename>')
 def serve_image(filename):
