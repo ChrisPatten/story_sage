@@ -1,9 +1,10 @@
 # Import necessary libraries and modules
 import logging
-from typing import List, Literal
+from typing import List, Tuple
 from chromadb import QueryResult
 from ..models import StorySageConfig, StorySageState, StorySageContext
 from . import StorySageLLM, StorySageRetriever
+from .story_sage_llm import _UsageType
 from ..utils import flatten_nested_list
 import regex as re
 
@@ -43,10 +44,13 @@ class StorySageChain:
     """
 
     def __init__(self, config: StorySageConfig, state: StorySageState, 
-                 log_level: int = logging.WARN):
-
+                 log_level: int = logging.WARN, print_logs_to_console: bool = False):
+        
         self.logger = logging.getLogger(__name__)
         self.logger.level = log_level
+        if print_logs_to_console:
+            console_handler = logging.StreamHandler()
+            self.logger.addHandler(console_handler)
         
         self.config = config
 
@@ -60,6 +64,8 @@ class StorySageChain:
         self.llm = StorySageLLM(config, log_level=log_level)
 
         self.state = state
+        self.needs_clarification = False
+        self.secondary_query = None
 
     def invoke(self) -> StorySageState:
         """Execute the chain to generate a response to the question in the current state.
@@ -67,62 +73,113 @@ class StorySageChain:
         Returns:
             StorySageState: Updated state containing the answer and context
         """
+        self.logger.debug(f'Invoking StorySageChain with question: {self.state.question}')
+        self.state.node_history = []
+
         # Get the initial context filters
         self._get_context_filters()
         self.logger.debug(f'Context filters: {self.state.context_filters}')
 
-        # Get the initial context
+        if self._is_followup_question():
+            self.logger.debug('Question is a followup')
+            if self._get_context_from_followup():
+                if self._generate():
+                    return self.state
+
+        # Generate an optimized query for vector search
+        try:
+            search_query, tokens = self.llm.generate_query(
+                question=self.state.question,
+                conversation=self.state.conversation
+            )
+            self.logger.debug(f'Generated search query: {search_query}')
+            self.state.search_query = search_query
+            self._add_usage(tokens)
+        except Exception as e:
+            self.logger.error(f'Error generating search query: {e}')
+            self.state.search_query = self.state.question
+
+        # Get the initial context based on the generated search query
         self._get_summary_context()
         self.logger.debug(f'Summary chunks: {self.state.summary_chunks}')
 
         # Try to get context from vector store
         while True:
-            if self._identify_relevant_chunks():
-                self.logger.debug(f'Identified relevant chunks: {self.state.target_ids}')
-                if self._get_context_by_ids():
-                    self.logger.debug(f'Got context by IDs')
-                    break
+            # Check if any summary chunks were returned by the initial search
+            if len(self.state.summary_chunks) > 0:
+                # Check for condition where model didn't find any relevant chunks
+                if not self._identify_relevant_chunks():
+                    # If a secondary query is returned, we need to use it to get more context
+                    if self.secondary_query:
+                        self.logger.debug(f'Secondary query: {self.secondary_query}')
+                        # Add it as a conversation turn and set it as the new question
+                        if self.state.answer:
+                            response = self.state.answer + '\n\n' + self.secondary_query
+                            self.state.conversation.add_turn(question=self.state.question, 
+                                                            detected_entities=self.state.entities, 
+                                                            context=self.state.context, 
+                                                            response=response)
+                            self.state.search_query = self.secondary_query  # Update search query but keep original question
+                            # Then skip to generation based on the new context from the secondary query
+                            if self._get_context_from_chunks(exclude_summaries=False):
+                                self.logger.debug(f'Got context from secondary query')
+                                break
+                # Otherwise, we identified some relevant context so we'll get the base chunks
+                else:
+                    self.logger.debug(f'Identified relevant chunks: {self.state.target_ids}')
+                    if self._get_context_by_ids():
+                        # If we got results, we can skip to generation
+                        self.logger.debug(f'Got context by IDs')
+                        break
+            # Next we'll try to get context from the full text without summaries
             if self._get_context_from_chunks(exclude_summaries=True):
                 self.logger.debug(f'Got context from chunks')
                 break
+            # Then we'll try to get context from the full text including summaries
             else:
                 self.logger.debug('No context found. Trying to get context from full text.')
                 if self._get_context_from_chunks(exclude_summaries=False):
                     self.logger.debug(f'Got context from full text')
                     break
+                # Then we'll try to identify keywords and use those to get context
                 else:
                     self.logger.debug('No context found in full text. Trying to get context from keywords.')
                     try:
-                        keywords = self.llm.get_keywords_from_question(question=self.state.question,
+                        keywords, tokens = self.llm.get_keywords_from_question(question=self.state.question,
                                                                     conversation=self.state.conversation)
+                        self._add_usage(tokens)
                         self.logger.debug(f'Keywords: {keywords}')
                         self._get_context_from_keywords(keywords=keywords)
                         break
                     except Exception as e:
                         self.logger.error(f'Error getting keywords: {e}')
                         break
-        
 
         self.state.summary_chunks = None
 
-        if not self._generate():
-            self.logger.debug('Generating response from semantic search failed. Trying keyword search.')
-            try:
-                keywords = self.llm.get_keywords_from_question(question=self.state.question,
-                                                            conversation=self.state.conversation)
-                self.logger.debug(f'Keywords: {keywords}')
-                self._get_context_from_keywords(keywords=keywords)
-                self._generate()
-            except Exception as e:
-                self.logger.error(f'Error getting keywords: {e}')
-                self.state.answer = "I'm sorry, I couldn't find an answer to that question."
+        generate_result = self._generate()
+        if generate_result:
+            if self.needs_clarification:
+                self.logger.debug('Generated clarifying question')
                 return self.state
+            self.logger.debug(f'Generated response: {self.state.answer}')
+            return self.state
 
+        self.logger.debug('Generating response from semantic search failed. Trying keyword search.')
+        try:
+            keywords = self.llm.get_keywords_from_question(question=self.state.question,
+                                                        conversation=self.state.conversation)
+            self.logger.debug(f'Keywords: {keywords}')
+            self._get_context_from_keywords(keywords=keywords)
+            if self._generate() and self.needs_clarification:
+                return self.state
+        except Exception as e:
+            self.logger.error(f'Error getting keywords: {e}')
 
+        if not self.state.answer:
+            self.state.answer = "I'm sorry, I couldn't find an answer to that question."
         
-        self.logger.debug(f'Generated response: {self.state.answer}')
         return self.state
-
 
     # Internal methods for steps in the chain
     def _get_context_filters(self) -> None:
@@ -142,7 +199,7 @@ class StorySageChain:
         context_filters = self.state.context_filters.copy()
         context_filters['top_level_only'] = True
         self.state.summary_chunks = self.raptor_retriever.retrieve_chunks(
-            query_str=self.state.question,
+            query_str=self.state.search_query,
             context_filters=context_filters
         )
         return
@@ -155,22 +212,23 @@ class StorySageChain:
         """
         self.state.node_history.append('IdentifyRelevantChunks')
         try:
-            relevant_chunks = self.llm.identify_relevant_chunks(
+            relevant_chunks, secondary_query, tokens = self.llm.identify_relevant_chunks(
                 question=self.state.question,
                 context=self.state.summary_chunks,
                 conversation=self.state.conversation
             )
+            self._add_usage(tokens)
         except Exception as e:
             self.logger.error(f'Error identifying relevant chunks: {e}')
             return False
-        if len(relevant_chunks[0]) < 1:
-            self.secondary_query = relevant_chunks[1]
+        if len(relevant_chunks) < 1:
+            self.secondary_query = secondary_query
             return False
-        elif not all(re.match(VALID_CHUNK_ID_PATTERN, chunk_id) for chunk_id in relevant_chunks[0]):
-            self.secondary_query = relevant_chunks[1]
+        elif not all(re.match(VALID_CHUNK_ID_PATTERN, chunk_id) for chunk_id in relevant_chunks):
+            self.secondary_query = secondary_query
             return False
         else:
-            self.state.target_ids = relevant_chunks[0]
+            self.state.target_ids = relevant_chunks
             return True
 
     def _get_context_by_ids(self) -> bool:
@@ -193,13 +251,10 @@ class StorySageChain:
         """Retrieve context from either summary or full text collection.
         
         Args:
-            collection: Either 'summary' or 'full' to specify which collection to query
+            exclude_summaries: Whether to exclude summary chunks from the search
             
         Returns:
             bool: True if context was successfully retrieved, False if no chunks found
-            
-        Raises:
-            ValueError: If collection is neither 'summary' nor 'full'
         """
         self.state.node_history.append('GetContextFromChunks')
 
@@ -209,9 +264,9 @@ class StorySageChain:
         else:
             context_filters = self.state.context_filters.copy()
 
-        
+        # Use the generated search query instead of the original question
         results = self.raptor_retriever.retrieve_chunks(
-            query_str=self.state.question,
+            query_str=self.state.search_query,
             context_filters=context_filters
         )
 
@@ -245,7 +300,7 @@ class StorySageChain:
 
         return True
 
-    def _generate(self) -> None:
+    def _generate(self) -> bool:
         """Generate response using LLM based on current context and question.
         
         Returns:
@@ -253,13 +308,20 @@ class StorySageChain:
         """
         self.state.node_history.append('Generate')
         try:
-            response = self.llm.generate_response(
+            response, has_answer, follow_up, tokens = self.llm.generate_response(
                 context=self.state.context,
                 question=self.state.question,
                 conversation=self.state.conversation
             )
-            self.state.answer = response[0]
-            return response[1]
+            self._add_usage(tokens)
+            if not has_answer and follow_up:
+                self.needs_clarification = True
+                self.state.answer = follow_up
+                return True
+            
+            self.needs_clarification = False
+            self.state.answer = (response + '\n\n' + follow_up) if follow_up else response
+            return has_answer
         except Exception as e:
             self.logger.error(f'Error generating response: {e}')
             return False
@@ -272,7 +334,7 @@ class StorySageChain:
             results: Query results from ChromaDB
             
         Returns:
-            List[StorySageContext]: List of context objects sorted by chunk ID
+            List<StorySageContext]: List of context objects sorted by chunk ID
         """
         self.logger.debug(f'Getting context from result: {results}')
         results['ids'] = flatten_nested_list(results['ids'])
@@ -304,3 +366,46 @@ class StorySageChain:
         except KeyError as e:
             self.logger.error(f'Tried to access a key that doesn\'t exist in results[\'metadatas\']: {e}')
             raise e
+    
+    def _add_usage(self, tokens: _UsageType) -> None:
+        """Add token usage to the state object.
+        
+        Args:
+            tokens: Tuple of token counts for the current operation
+        """
+        self.state.tokens_used = (self.state.tokens_used[0] + tokens[0], self.state.tokens_used[1] + tokens[1])
+        return
+    
+    def _is_followup_question(self) -> bool:
+        """Check if current question is a followup based on conversation history."""
+        return len(self.state.conversation.get_history()) > 0
+
+    def _get_context_from_followup(self) -> bool:
+        """Get context using followup query based on conversation history.
+        
+        Returns:
+            bool: True if context was found, False otherwise
+        """
+        self.state.node_history.append('GetContextFromFollowup')
+        try:
+            query, tokens = self.llm.generate_followup_query(
+                question=self.state.question,
+                conversation=self.state.conversation
+            )
+            self._add_usage(tokens)
+            self.logger.debug(f'Generated followup query: {query}')
+            
+            chunks = self.vector_store.similarity_search(
+                query=query,
+                filters=self.state.context_filters,
+                k=self.config.chunk_count
+            )
+            if not chunks:
+                self.logger.debug('No chunks found from followup query')
+                return False
+                
+            self.state.context_chunks = chunks
+            return True
+        except Exception as e:
+            self.logger.error(f'Error in followup query: {e}')
+            return False

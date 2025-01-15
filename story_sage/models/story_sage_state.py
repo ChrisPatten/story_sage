@@ -2,6 +2,9 @@ from dataclasses import dataclass, field
 from typing import List, TypedDict, Literal, Tuple
 from .story_sage_conversation import StorySageConversation
 
+
+INPUT_TOKENS_CPM = 0.15
+OUTPUT_TOKENS_CPM = 0.6
 @dataclass
 class StorySageState():
     """Represents the current state of a StorySage query session.
@@ -48,7 +51,12 @@ class StorySageState():
     target_ids: List[str] = field(default_factory=list)  # Specific chunks to get full text from
     context: List[Tuple[str, str, str, str]] = field(default_factory=list)  # Retrieved context chunks
     answer: str = None  # Generated response
+    search_query: str = None
     entities: List[str] = field(default_factory=list)  # Extracted relevant entities
     conversation: StorySageConversation = None  # Conversation history
     node_history: List[str] = field(default_factory=list)  # Track traversed nodes
-    tokens_used: int = 0  # Token usage tracking
+    tokens_used: Tuple[int, int] = (0, 0)  # Token usage tracking
+
+    def get_cost(self) -> str:
+        cost = (self.tokens_used[0]/1000000*INPUT_TOKENS_CPM) + (self.tokens_used[1]/1000000*OUTPUT_TOKENS_CPM)
+        return f"${cost:.4f}"
