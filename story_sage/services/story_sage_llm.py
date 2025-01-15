@@ -231,7 +231,7 @@ class StorySageLLM:
         class QueryResult(BaseModel):
             query: str
 
-        messages = self._set_up_prompt('generate_query_prompt', {'question': question}, conversation)
+        messages = self._set_up_prompt('generate_initial_query_prompt', {'question': question}, conversation)
 
         try:
             response = self.client.beta.chat.completions.parse(
