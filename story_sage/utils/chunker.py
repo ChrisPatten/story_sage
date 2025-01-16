@@ -21,7 +21,6 @@ Typical usage example:
 """
 
 import os
-from langchain_core.documents import Document
 import torch
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -31,10 +30,6 @@ import glob
 from collections import OrderedDict
 import re
 from llama_index.core.node_parser import SentenceSplitter
-import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score
-from kneed import KneeLocator
 from typing import Union, List
 import logging
 
@@ -89,7 +84,11 @@ class StorySageChunker:
                 Defaults to 'sentence-transformers/all-mpnet-base-v1'.
         """
         # Initialize the sentence transformer model
-        self.model = SentenceTransformer(model_name, local_files_only=True)
+        try:
+            self.model = SentenceTransformer(model_name, local_files_only=True)
+        except EnvironmentError:
+            self.model = SentenceTransformer(model_name, local_files_only=False)
+            
         device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
         self.model = self.model.to(device)
         self.logger = logging.getLogger(__name__)
@@ -370,109 +369,3 @@ class StorySageChunker:
         splitter = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         chunks = splitter.split_text(text)
         return chunks
-
-    def analyze_optimal_clusters(self, embeddings, max_clusters=10, plot=True):
-        """Analyzes optimal number of clusters using both Elbow Method and BIC.
-        
-        Args:
-            embeddings: Document embeddings to analyze
-            max_clusters: Maximum number of clusters to test
-            plot: Whether to display visualization plots
-            
-        Returns:
-            dict: Results containing optimal cluster counts and scores
-            {
-                'elbow_k': optimal k from elbow method,
-                'bic_k': optimal k from BIC,
-                'elbow_scores': list of distortion scores,
-                'bic_scores': list of BIC scores
-            }
-        """
-        k_range = range(2, max_clusters + 1)
-        
-        # Calculate scores for each k
-        elbow_scores = self._calculate_elbow_scores(embeddings, k_range)
-        bic_scores = self._calculate_bic_scores(embeddings, k_range)
-        
-        # Find optimal k using elbow method
-        kneedle = KneeLocator(
-            list(k_range), 
-            elbow_scores,
-            curve='convex', 
-            direction='decreasing'
-        )
-        elbow_k = kneedle.knee
-        
-        # Find optimal k using BIC
-        bic_k = k_range[np.argmax(bic_scores)]
-        
-        if plot:
-            self._plot_cluster_analysis(k_range, elbow_scores, bic_scores, elbow_k, bic_k)
-            
-        return {
-            'elbow_k': elbow_k,
-            'bic_k': bic_k,
-            'elbow_scores': elbow_scores,
-            'bic_scores': bic_scores
-        }
-
-    def _calculate_elbow_scores(self, embeddings, k_range):
-        """Calculates distortion scores for elbow method."""
-        scores = []
-        for k in k_range:
-            kmeans = KMeans(n_clusters=k, random_state=42)
-            kmeans.fit(embeddings)
-            scores.append(kmeans.inertia_)
-        return scores
-
-    def _calculate_bic_scores(self, embeddings, k_range):
-        """Calculates BIC scores for different cluster counts."""
-        n_samples, n_features = embeddings.shape
-        bic_scores = []
-        
-        for k in k_range:
-            kmeans = KMeans(n_clusters=k, random_state=42)
-            labels = kmeans.fit_predict(embeddings)
-            
-            # Calculate components of BIC
-            centroids = kmeans.cluster_centers_
-            variance = np.sum((embeddings - centroids[labels]) ** 2) / (n_samples - k)
-            
-            # Calculate log likelihood
-            log_likelihood = (
-                -0.5 * n_samples * n_features * np.log(2 * np.pi * variance)
-                - 0.5 * (n_samples - k) * n_features
-            )
-            
-            # Calculate BIC
-            n_parameters = k * n_features + 1
-            bic = log_likelihood - 0.5 * n_parameters * np.log(n_samples)
-            bic_scores.append(bic)
-            
-        return bic_scores
-
-    def _plot_cluster_analysis(self, k_range, elbow_scores, bic_scores, elbow_k, bic_k):
-        """Visualizes elbow method and BIC analysis results."""
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
-        
-        # Plot Elbow curve
-        ax1.plot(k_range, elbow_scores, 'bo-')
-        ax1.set_xlabel('Number of Clusters (k)')
-        ax1.set_ylabel('Distortion Score')
-        ax1.set_title('Elbow Method Analysis')
-        if elbow_k:
-            ax1.axvline(x=elbow_k, color='r', linestyle='--', 
-                       label=f'Optimal k={elbow_k}')
-            ax1.legend()
-        
-        # Plot BIC curve
-        ax2.plot(k_range, bic_scores, 'go-')
-        ax2.set_xlabel('Number of Clusters (k)')
-        ax2.set_ylabel('BIC Score')
-        ax2.set_title('BIC Analysis')
-        ax2.axvline(x=bic_k, color='r', linestyle='--', 
-                    label=f'Optimal k={bic_k}')
-        ax2.legend()
-        
-        plt.tight_layout()
-        plt.show()
