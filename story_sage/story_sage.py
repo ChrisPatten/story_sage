@@ -92,11 +92,6 @@ class StorySage:
         # Initialize series info
         self.series_list = config.series
 
-        # Initialize retriever and chain components
-        self.summary_retriever = StorySageRetriever(config.chroma_path, config.chroma_collection, config.n_chunks)
-        self.full_retriever = StorySageRetriever(config.chroma_path, config.chroma_full_text_collection, round(config.n_chunks / 3))
-        
-
     def invoke(self, question: str, book_number: int = None, 
                chapter_number: int = None, series_id: int = None,
                conversation: StorySageConversation = None) -> Tuple[str, List[StorySageContext], str, List[str]]:
@@ -176,7 +171,8 @@ class StorySage:
             
             # Log the results
             self.logger.debug(f"Generated answer: {result.answer}")
-            self.logger.debug(f"Retrieved context: {result.context}")
+            self.logger.debug(f"Retrieved context: {len(result.context)}")
+            self.logger.info(f"Turn cost: {result.get_cost()}")
             
             return result.answer, result.context, None, result.entities
             

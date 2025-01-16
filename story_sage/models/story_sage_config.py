@@ -23,8 +23,6 @@ class StorySageConfig:
     Attributes:
         openai_api_key (str): API key for OpenAI authentication.
         chroma_path (str): Local filesystem path for ChromaDB storage.
-        chroma_collection (str): Name of the main ChromaDB collection for embeddings.
-        chroma_full_text_collection (str): Name of the ChromaDB collection for full text storage.
         n_chunks (int): Number of chunks to split text into during processing.
         prompts (Dict[str, List[Dict[str, str]]]): Dictionary of prompt templates for various operations.
         entities (Dict[str, StorySageEntityCollection]): Dictionary of entity collections by name.
@@ -39,8 +37,7 @@ class StorySageConfig:
         >>> config = {
         ...     'OPENAI_API_KEY': 'sk-...',
         ...     'CHROMA_PATH': './chromadb',
-        ...     'CHROMA_COLLECTION': 'book_embeddings',
-        ...     'CHROMA_FULL_TEXT_COLLECTION': 'book_texts',
+        ...     'RAPTOR_COLLECTION': 'raptor',
         ...     'N_CHUNKS': 5,
         ...     'COMPLETION_MODEL': 'gpt-3.5-turbo',
         ...     'COMPLETION_TEMPERATURE': 0.7,
@@ -57,8 +54,7 @@ class StorySageConfig:
     """
     openai_api_key: str
     chroma_path: str
-    chroma_collection: str
-    chroma_full_text_collection: str
+    raptor_collection: str
     n_chunks: int
     prompts: Dict[str, List[Dict[str, str]]] = field(default_factory=dict)
     entities: Dict[str, StorySageEntityCollection] = field(default_factory=dict)
@@ -131,8 +127,7 @@ class StorySageConfig:
             config (dict): Configuration dictionary containing all required settings:
                 - OPENAI_API_KEY (str): OpenAI API authentication key
                 - CHROMA_PATH (str): Path to ChromaDB storage
-                - CHROMA_COLLECTION (str): Name of embeddings collection
-                - CHROMA_FULL_TEXT_COLLECTION (str): Name of full text collection
+                - RAPTOR_COLLECTION (str): Name of collection for raptor retrieval
                 - N_CHUNKS (int): Number of text chunks for processing
                 - COMPLETION_MODEL (str): OpenAI model name
                 - COMPLETION_TEMPERATURE (float): Model temperature setting
@@ -160,8 +155,8 @@ class StorySageConfig:
             >>> print(ssconfig.redis_ex)
             3600
         """
-        required_keys = ['OPENAI_API_KEY', 'CHROMA_PATH', 'CHROMA_COLLECTION', 'CHROMA_FULL_TEXT_COLLECTION',
-                         'SERIES_PATH', 'ENTITIES_PATH', 'N_CHUNKS', 'REDIS_URL',
+        required_keys = ['OPENAI_API_KEY', 'CHROMA_PATH', 
+                         'SERIES_PATH', 'ENTITIES_PATH', 'N_CHUNKS', 'REDIS_URL', 'RAPTOR_COLLECTION',
                          'REDIS_EXPIRE', 'PROMPTS_PATH', 'COMPLETION_MODEL', 'COMPLETION_TEMPERATURE',
                          'COMPLETION_MAX_TOKENS']
         for key in required_keys:
@@ -171,12 +166,11 @@ class StorySageConfig:
         ssconfig = StorySageConfig(
             openai_api_key=config['OPENAI_API_KEY'],
             chroma_path=config['CHROMA_PATH'],
-            chroma_collection=config['CHROMA_COLLECTION'],
-            chroma_full_text_collection=config['CHROMA_FULL_TEXT_COLLECTION'],
             n_chunks=config['N_CHUNKS'],
             completion_model=config['COMPLETION_MODEL'],
             completion_temperature=config['COMPLETION_TEMPERATURE'],
-            completion_max_tokens=config['COMPLETION_MAX_TOKENS']
+            completion_max_tokens=config['COMPLETION_MAX_TOKENS'],
+            raptor_collection=config['RAPTOR_COLLECTION']
         )
 
         # Load entities from ENTITIES_PATH
@@ -203,3 +197,26 @@ class StorySageConfig:
             logger.debug(f"Loaded prompts from {config['PROMPTS_PATH']}")
 
         return ssconfig
+    
+    @classmethod
+    def from_file(cls, config_path: str) -> 'StorySageConfig':
+        """Creates a new StorySageConfig instance from a configuration file.
+
+        Args:
+            config_path (str): Path to the configuration file (YAML format)
+
+        Returns:
+            StorySageConfig: Fully initialized configuration instance
+
+        Raises:
+            FileNotFoundError: If the configuration file is not found
+            Exception: If the configuration file is invalid or missing required keys
+
+        Example:
+            >>> ssconfig = StorySageConfig.from_file('config.yaml')
+            >>> print(ssconfig.openai_api_key)
+            'sk-...'
+        """
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        return cls.from_config(config)

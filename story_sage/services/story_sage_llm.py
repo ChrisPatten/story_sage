@@ -36,13 +36,18 @@ Example:
 """
 
 from openai import OpenAI
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Tuple, TypeAlias
 from ..models import StorySageConfig, StorySageConversation, StorySageContext
 from pydantic import BaseModel
 import httpx
 import logging
+from ..utils.junk_drawer import EmojiFormatter
 
-
+_UsageType: TypeAlias = Tuple[int, int]
+"""Type alias for usage information tuple containing:
+    completion_tokens: Number of tokens in the generated completion
+    prompt_tokens: Number of tokens in the prompt
+"""
 
 class StorySageLLM:
     """A class to handle LLM operations for document Q&A using OpenAI's API.
@@ -62,12 +67,25 @@ class StorySageLLM:
         self.config = config
         self.prompts = config.prompts
         self.client = OpenAI(api_key=config.openai_api_key, http_client=httpx.Client(verify=False))
+
+        # Setup logger with emoji formatter
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
+        
+        # Create console handler if none exists
+        if not self.logger.handlers:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(log_level)
+            
+            # Create and set formatter
+            formatter = EmojiFormatter('%(emoji)s %(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            console_handler.setFormatter(formatter)
+            
+            self.logger.addHandler(console_handler)
 
     def generate_response(self, context: List[StorySageContext], question: str, 
                           conversation: StorySageConversation = None,
-                          model: str = None, **kwargs) -> Tuple[str, bool, str]:
+                          model: str = None, **kwargs) -> Tuple[str, bool, str, _UsageType]:
         """Generates a response based on the provided context and question.
 
         Args:
@@ -78,10 +96,11 @@ class StorySageLLM:
             **kwargs: Additional arguments passed to OpenAI API
 
         Returns:
-            Tuple[str, bool, str]: Contains:
+            Tuple[str, bool, str, _UsageType]: Contains:
                 - response: Generated answer text
                 - has_answer: Boolean indicating if an answer was found
                 - follow_up: Suggested follow-up question
+                - tokens: Number of tokens used in the turn
 
         Raises:
             Exception: If OpenAI API call fails
@@ -105,14 +124,55 @@ class StorySageLLM:
                 response_format=CompletionResult
             )
             result: CompletionResult = response.choices[0].message.parsed
-            self.logger.debug(result)
-            return (result.response, result.has_answer, result.follow_up)
+            tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
+            #self.logger.debug(result)
+            return (result.response, result.has_answer, result.follow_up, tokens)
+        except Exception as e:
+            raise Exception(f"Error getting completion from OpenAI: {str(e)}")
+        
+    def evaluate_chunks(self, context: Dict[str, str], question: str, 
+                        conversation: StorySageConversation = None, 
+                        model: str = None, **kwargs) -> Tuple[str, _UsageType]:
+        """Evaluates the relevance of document chunks to a given question.
+
+        Args:
+            context (Dict[str, str]): Dictionary mapping chunk IDs to their summaries
+            question (str): User's question to evaluate chunks for
+            conversation (StorySageConversation, optional): Previous conversation history. Defaults to None
+            model (str, optional): OpenAI model to use. Defaults to config's model
+            **kwargs: Additional arguments passed to OpenAI API
+
+        Returns:
+            Tuple[str, _UsageType]: Contains:
+                - evaluation: Evaluation of chunk relevance
+                - tokens: Number of tokens used in the turn
+
+        Raises:
+            Exception: If OpenAI API call fails
+        """
+        
+        class EvaluationResult(BaseModel):
+            evaluation: dict[str, int]
+
+        summaries = '\n'.join([f"- {id}: {doc}" for id, doc in context.items()])
+        prompt_formatter = {'chunks': summaries, 'question': question}
+        messages = self._set_up_prompt('evaluate_chunks_relevance', prompt_formatter, conversation)
+        
+        try:
+            response = self.client.beta.chat.completions.parse(
+                model=model or self.config.completion_model,
+                messages=messages,
+                response_format=EvaluationResult
+            )
+            result: EvaluationResult = response.choices[0].message.parsed
+            tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
+            return result, tokens
         except Exception as e:
             raise Exception(f"Error getting completion from OpenAI: {str(e)}")
 
     def identify_relevant_chunks(self, context: Dict[str, str], question: str, 
                                  conversation: StorySageConversation = None, 
-                                 model: str = None, **kwargs) -> Tuple[List[str], str]:
+                                 model: str = None, **kwargs) -> Tuple[List[str], str, _UsageType]:
         """Identifies the most relevant document chunks for a given question.
 
         Args:
@@ -123,9 +183,10 @@ class StorySageLLM:
             **kwargs: Additional arguments passed to OpenAI API
 
         Returns:
-            Tuple[List[str], str]: Contains:
+            Tuple[List[str], str, _UsageType]: Contains:
                 - chunk_ids: List of relevant chunk IDs
                 - secondary_query: Refined search query based on the question
+                - tokens: Number of tokens used in the turn
 
         Raises:
             Exception: If OpenAI API call fails
@@ -146,12 +207,13 @@ class StorySageLLM:
                 response_format=RelevantChunks
             )
             result: RelevantChunks = response.choices[0].message.parsed
-            return (result.chunk_ids, result.secondary_query)
+            tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
+            return (result.chunk_ids, result.secondary_query, tokens)
         except Exception as e:
             raise Exception(f"Error getting completion from OpenAI: {str(e)}")
         
     def get_keywords_from_question(self, question: str, conversation: StorySageConversation = None,
-                                   model: str = None, **kwargs) -> List[str]:
+                                   model: str = None, **kwargs) -> Tuple[List[str], _UsageType]:
         """Extracts relevant keywords from a question for search purposes.
 
         Args:
@@ -161,7 +223,10 @@ class StorySageLLM:
             **kwargs: Additional arguments passed to OpenAI API
 
         Returns:
-            List[str]: List of extracted keywords
+            Tuple[List[str], _UsageType]: Contains:
+                - keywords: List of extracted keywords
+                - tokens: Number of tokens used in the turn
+            
 
         Raises:
             Exception: If OpenAI API call fails
@@ -179,7 +244,122 @@ class StorySageLLM:
                 response_format=KeywordsResult
             )
             result: KeywordsResult = response.choices[0].message.parsed
-            return result.keywords
+            tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
+            return result.keywords, tokens
+        except Exception as e:
+            raise Exception(f"Error getting completion from OpenAI: {str(e)}")
+
+    def generate_query(self, question: str, conversation: StorySageConversation = None,
+                      model: str = None, **kwargs) -> Tuple[str, _UsageType]:
+        """Generates a query for vector store search based on the question.
+
+        Args:
+            question (str): Question to generate a search query from
+            conversation (StorySageConversation, optional): Previous conversation history. Defaults to None
+            model (str, optional): OpenAI model to use. Defaults to config's model
+            **kwargs: Additional arguments passed to OpenAI API
+
+        Returns:
+            Tuple[str, _UsageType]: Contains:
+                - query: Generated search query
+                - tokens: Number of tokens used in the turn
+
+        Raises:
+            Exception: If OpenAI API call fails
+        """
+        
+        class QueryResult(BaseModel):
+            query: str
+
+        messages = self._set_up_prompt('generate_initial_query_prompt', {'question': question}, conversation)
+
+        try:
+            response = self.client.beta.chat.completions.parse(
+                model=model or self.config.completion_model,
+                messages=messages,
+                response_format=QueryResult
+            )
+            result: QueryResult = response.choices[0].message.parsed
+            tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
+            return result.query, tokens
+        except Exception as e:
+            raise Exception(f"Error getting completion from OpenAI: {str(e)}")
+        
+    def generate_followup_query(self, question: str, conversation: StorySageConversation,
+                              model: str = None, **kwargs) -> Tuple[str, _UsageType]:
+        """Generates a followup query for vector store search based on conversation history and current question.
+    
+        Args:
+            question (str): Current question to generate search query from
+            conversation (StorySageConversation): Previous conversation history
+            model (str, optional): OpenAI model to use. Defaults to config's model
+            **kwargs: Additional arguments passed to OpenAI API
+    
+        Returns:
+            Tuple[str, _UsageType]: Contains:
+                - query: Generated search query
+                - tokens: Number of tokens used in the turn
+    
+        Raises:
+            Exception: If OpenAI API call fails
+        """
+        
+        class QueryResult(BaseModel):
+            query: str
+    
+        messages = self._set_up_prompt('generate_followup_query_prompt', {
+            'conversation': conversation,
+            'question': question
+        })
+    
+        try:
+            response = self.client.beta.chat.completions.parse(
+                model=model or self.config.completion_model,
+                messages=messages,
+                response_format=QueryResult
+            )
+            result: QueryResult = response.choices[0].message.parsed
+            tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
+            return result.query, tokens
+        except Exception as e:
+            raise Exception(f"Error getting completion from OpenAI: {str(e)}")
+
+    def refine_followup_question(self, question: str, conversation: StorySageConversation,
+                                 model: str = None, **kwargs) -> Tuple[str, _UsageType]:
+        """Refines the user's follow-up question based on the context of the conversation.
+
+        Args:
+            question (str): Current follow-up question to refine
+            conversation (StorySageConversation): Previous conversation history
+            model (str, optional): OpenAI model to use. Defaults to config's model
+            **kwargs: Additional arguments passed to OpenAI API
+
+        Returns:
+            Tuple[str, _UsageType]: Contains:
+                - refined_question: Refined follow-up question
+                - tokens: Number of tokens used in the turn
+
+        Raises:
+            Exception: If OpenAI API call fails
+        """
+        
+        class RefinedQuestionResult(BaseModel):
+            refined_question: str
+
+        messages = self._set_up_prompt('refine_followup_question', {
+            'history': conversation,
+            'question': question
+        })
+
+        try:
+            response = self.client.beta.chat.completions.parse(
+                model=model or self.config.completion_model,
+                messages=messages,
+                response_format=RefinedQuestionResult
+            )
+            result: RefinedQuestionResult = response.choices[0].message.parsed
+            tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
+            return result.refined_question, tokens
         except Exception as e:
             raise Exception(f"Error getting completion from OpenAI: {str(e)}")
 

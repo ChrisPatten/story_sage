@@ -10,8 +10,7 @@ def test_config_initialization(mock_config_dict):
     config = StorySageConfig(
         openai_api_key=mock_config_dict['OPENAI_API_KEY'],
         chroma_path=mock_config_dict['CHROMA_PATH'],
-        chroma_collection=mock_config_dict['CHROMA_COLLECTION'],
-        chroma_full_text_collection=mock_config_dict['CHROMA_FULL_TEXT_COLLECTION'],
+        raptor_collection=mock_config_dict['RAPTOR_COLLECTION'],
         n_chunks=mock_config_dict['N_CHUNKS']
     )
     

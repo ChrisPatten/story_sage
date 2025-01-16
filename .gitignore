@@ -23,6 +23,7 @@ prompts*.yml
 chunks/*.pickle
 chroma_data/
 *.rdb
+*.gz
 
 # Output directories
 booknlp/output/
@@ -34,7 +35,7 @@ booknlp/output/
 *.json
 
 # HTML files
-tests/quality_test_results.html
+tests/*.html
 
 # Cover images
 images/**/*.jpg
