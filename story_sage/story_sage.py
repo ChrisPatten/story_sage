@@ -1,147 +1,183 @@
 import logging
 import uuid
 from typing import Tuple, Optional, Dict, List
-from .data_classes.story_sage_state import StorySageState
-from .vector_store import StorySageRetriever
-from .story_sage_chain import StorySageChain
-from .data_classes.story_sage_config import StorySageConfig
-from .story_sage_conversation import StorySageConversation
-
-class ConditionalRequestIDFormatter(logging.Formatter):
-    """Custom formatter to include request_id only if it's not None.
-    
-    Extends the built-in logging.Formatter to conditionally append a
-    request_id to the log message if present.
-    """
-    
-    def format(self, record):
-        if hasattr(record, 'request_id') and record.request_id:
-            original_msg = super().format(record)
-            return f"{original_msg} [Request ID: {record.request_id}]"
-        return super().format(record)
+from .models import StorySageConfig, StorySageContext, StorySageState, StorySageConversation
+from .services import StorySageChain, StorySageRetriever
 
 class StorySage:
-    """Main class for the Story Sage system.
+    """A sophisticated story comprehension and tracking system.
 
-    Coordinates between the retriever, chain, and state management components
-    to help readers track story elements.
+    StorySage helps readers understand and track elements of complex narratives by providing
+    context-aware answers to questions about the story. It combines vector storage, LLM chains,
+    and state management to maintain coherent conversations about story elements.
 
-    Example usage:
-        story_sage = StorySage(
-            api_key="YOUR_API_KEY",
-            chroma_path="path/to/chroma",
-            chroma_collection_name="collection_name",
-            entities_dict={"meta": StorySageEntityCollection(...)},
-            series_list=[{"title": "Series Title"}],
-            n_chunks=5
-        )
-        answer, context, request_id = story_sage.invoke(
-            question="Who is the main character?",
-            book_number=1,
-            chapter_number=1,
-            series_id=1
-        )
+    The system maintains conversation history and context awareness to provide more accurate
+    and contextually relevant answers to follow-up questions.
 
-        Example result:
-            answer: "The main character is Rand al'Thor."
-            context: ["Rand al'Thor is introduced in the first chapter..."]
-            request_id: "123e4567-e89b-12d3-a456-426614174000"
+    Attributes:
+        logger: A configured logging instance for tracking system events and debugging.
+        request_id: A unique identifier for tracking individual question/answer sessions.
+        entities: A dictionary mapping entity types to their collections (e.g., characters, locations).
+        series_list: List of dictionaries containing metadata about book series in the system.
+        summary_retriever: Component for retrieving relevant summary text chunks.
+        full_retriever: Component for retrieving relevant full text chunks.
+        chain: Processing chain for generating answers from context and questions.
+        config: Configuration object containing system parameters and settings.
+
+    Example:
+        >>> # Initialize with configuration from dictionary
+        >>> config_dict = {
+        ...     'OPENAI_API_KEY': 'sk-...',
+        ...     'CHROMA_PATH': './chromadb',
+        ...     'CHROMA_COLLECTION': 'book_embeddings',
+        ...     'CHROMA_FULL_TEXT_COLLECTION': 'book_texts',
+        ...     'N_CHUNKS': 5,
+        ...     'COMPLETION_MODEL': 'gpt-3.5-turbo',
+        ...     'COMPLETION_TEMPERATURE': 0.7,
+        ...     'COMPLETION_MAX_TOKENS': 2000,
+        ...     'SERIES_PATH': 'configs/series.yaml',
+        ...     'ENTITIES_PATH': 'configs/entities.json',
+        ...     'REDIS_URL': 'redis://localhost:6379/0',
+        ...     'REDIS_EXPIRE': 3600,
+        ...     'PROMPTS_PATH': 'configs/prompts.yaml'
+        ... }
+        >>> config = StorySageConfig.from_config(config_dict)
+        >>> sage = StorySage(config)
+        >>> 
+        >>> # Ask a question about specific book/chapter
+        >>> answer, context, req_id, entities = sage.invoke(
+        ...     question="Who appears in the first scene?",
+        ...     book_number=1,
+        ...     chapter_number=1,
+        ...     series_id=1
+        ... )
+            
+        >>> # Follow-up question using conversation history
+        >>> redis_client = redis.Redis.from_url('redis://localhost:6379/0')
+        >>> conv = StorySageConversation(redis=redis_client)
+        >>> conv.add_turn(
+        ...     question="What happens when Alice enters the garden?",
+        ...     detected_entities=["character_alice", "location_garden"],
+        ...     context=["Alice discovers a magical fountain..."],
+        ...     response="Alice discovers a magical fountain in the garden...",
+        ...     request_id="turn_001"
+        ... )
+        >>> answer, context, req_id, entities = sage.invoke(
+        ...     question="What does she do next?",
+        ...     conversation=conv
+        ... )
     """
 
-    def __init__(self, config: StorySageConfig):
-        """Initializes the StorySage instance.
+    def __init__(self, config: StorySageConfig, log_level: int = logging.INFO):
+        """Initializes a new StorySage instance with the provided configuration.
 
         Args:
-            api_key (str): API key for accessing external services.
-            chroma_path (str): Path to the Chroma database.
-            chroma_collection_name (str): Name of the Chroma collection.
-            entities_dict (dict[str, StorySageEntityCollection]): Mapping of series metadata to entity collections.
-            series_list (List[dict], optional): A list of dictionaries representing series info. Defaults to [].
-            n_chunks (int, optional): Number of chunks for the retriever to process. Defaults to 5.
+            config (StorySageConfig): Configuration object containing all necessary parameters
+                including API keys, database paths, entity collections, and prompt templates.
+                See class docstring for detailed config example.
+            log_level (int, optional): The logging level to use. Defaults to logging.INFO.
+                Use logging.DEBUG for more detailed output during development.
         """
         # Set up logging
-        self._logger = logging.getLogger(__name__)
-        self._logger.setLevel(logging.DEBUG)
-        self._logger.propagate = True  # Allow logs to root logger
-        handler = logging.StreamHandler()
-        handler.setLevel(logging.DEBUG)
-        formatter = ConditionalRequestIDFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        self._logger.addHandler(handler)
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(log_level)
 
         # Initialize request_id
         self.request_id = None
+        
+        self.config = config
 
         self.entities = config.entities
 
         # Initialize series info
         self.series_list = config.series
 
-        # Create a LoggerAdapter to include class attributes
-        self.logger = logging.LoggerAdapter(self._logger, {'request_id': self.request_id})
-
-        # Initialize retriever and chain components
-        self.retriever = StorySageRetriever(config.chroma_path, config.chroma_collection, config.n_chunks)
-        self.chain = StorySageChain(config.openai_api_key, self.entities, self.series_list, self.retriever, self.logger)
-        
-
     def invoke(self, question: str, book_number: int = None, 
                chapter_number: int = None, series_id: int = None,
-               conversation: StorySageConversation = None) -> Tuple[str, List[str], str, List[str]]:
-        """Invokes the question-processing logic through the chain.
+               conversation: StorySageConversation = None) -> Tuple[str, List[StorySageContext], str, List[str]]:
+        """Processes a question about the story and generates a contextual response.
+
+        This method coordinates the retrieval of relevant context and the generation
+        of appropriate responses, taking into account the current position in the story
+        and any ongoing conversation history.
 
         Args:
-            question (str): The user's question about the story.
-            book_number (int, optional): Optional book number for context filtering. Defaults to None.
-            chapter_number (int, optional): Optional chapter number for context filtering. Defaults to None.
-            series_id (int, optional): Optional series ID for context filtering. Defaults to None.
+            question (str): The user's question about the story content.
+            book_number (int, optional): The specific book number to reference for context.
+                When None, uses the latest book in the series.
+            chapter_number (int, optional): The specific chapter number to reference.
+                When None, considers the entire book context.
+            series_id (int, optional): The ID of the book series being discussed.
+                When None, defaults to the first available series.
+            conversation (StorySageConversation, optional): Previous conversation context
+                for maintaining coherent multi-turn discussions. Contains prior
+                questions, answers, and referenced entities.
 
         Returns:
-            Tuple[str, List[str], str, List[str]]: A tuple containing the answer, context list, generated request ID, and list of entity IDs.
+            tuple: A tuple containing:
+                - answer (str): The generated response to the question
+                - context (List[StorySageContext]): Relevant text chunks used for the answer
+                - request_id (str): Unique identifier for tracking this Q&A turn
+                - entities (List[str]): IDs of story entities (characters, locations, etc.)
+                    referenced in the response
+
+        Raises:
+            Exception: If there's an error during question processing, context retrieval,
+                or response generation.
+
+        Example:
+            >>> # Simple question about a specific chapter
+            >>> answer, context, req_id, entities = sage.invoke(
+            ...     question="What happens when Alice enters the garden?",
+            ...     book_number=1,
+            ...     chapter_number=3
+            ... )
+            >>> print(f"Answer: {answer}")
+            "Answer: Alice discovers a magical fountain in the garden..."
+            >>> print(f"Referenced entities: {entities}")
+            "Referenced entities: ['character_alice', 'location_garden', 'item_fountain']"
+            
+            >>> # Follow-up question using conversation history
+            >>> redis_client = redis.Redis.from_url('redis://localhost:6379/0')
+            >>> conv = StorySageConversation(redis=redis_client)
+            >>> conv.add_turn(
+            ...     question="What happens when Alice enters the garden?",
+            ...     detected_entities=["character_alice", "location_garden"],
+            ...     context=["Alice discovers a magical fountain..."],
+            ...     response="Alice discovers a magical fountain in the garden...",
+            ...     request_id="turn_001"
+            ... )
+            >>> answer, context, req_id, entities = sage.invoke(
+            ...     question="What does she do next?",
+            ...     conversation=conv
+            ... )
         """
         self.logger.info(f"Processing question: {question}")
-        
-        # Generate and set request_id
-        self.request_id = str(uuid.uuid4())
-        self.logger = logging.LoggerAdapter(self._logger, {'request_id': self.request_id})
-        self.logger.debug(f"Set request_id to {self.request_id}")
-        self.chain.logger = self.logger
 
         # Initialize state with default values
         state = StorySageState(
             question=question,
-            book_number=book_number or 100,  # Default to end of series if not specified
-            chapter_number=chapter_number or 0,
-            series_id=series_id or 0,
-            context=None,
-            answer=None,
-            entities=[],
-            order_by='most_recent',
+            book_number=book_number,  
+            chapter_number=chapter_number,
+            series_id=series_id,
             conversation=conversation
         )
 
+        self.chain = StorySageChain(config=self.config, state=state, log_level=self.logger.level)
+
         try:
             # Process the question through the chain
-            result = self.chain.graph.invoke(state)
+            result = self.chain.invoke()
             
             # Log the results
-            self.logger.debug(f"Generated answer: {result['answer']}")
-            self.logger.debug(f"Retrieved context: {result['context']}")
+            self.logger.debug(f"Generated answer: {result.answer}")
+            self.logger.debug(f"Retrieved context: {len(result.context)}")
+            self.logger.info(f"Turn cost: {result.get_cost()}")
             
-            return result['answer'], result['context'], self.request_id, result['entities']
+            return result.answer, result.context, None, result.entities
             
         except Exception as e:
             self.logger.error(f"Error processing question: {e}")
+            self.logger.debug(f"Question: {question}\nBook: {book_number}\nChapter: {chapter_number}\nSeries: {series_id}")
+            self.logger.debug(f"State: {state}")
             raise e
-
-# Example usage:
-# Initialize StorySage with required parameters
-# story_sage = StorySage(api_key="your_api_key", chroma_path="path/to/chroma", chroma_collection_name="collection_name")
-
-# Invoke the system with a question
-# answer, context, request_id = story_sage.invoke(question="Who is the main character?", book_number=1, chapter_number=1, series_id=1)
-
-# Example result:
-# answer: "The main character is Rand al'Thor."
-# context: ["Rand al'Thor is introduced in the first chapter of the first book."]
-# request_id: "123e4567-e89b-12d3-a456-426614174000"

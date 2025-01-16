@@ -2,6 +2,7 @@
 .python-version
 __pycache__/
 *.pkl
+.pytest_cache
 
 # Text and document files
 *.txt
@@ -15,24 +16,30 @@ __pycache__/
 config.yml
 series*.yml
 redis_config.conf
+prompts*.yml
 
 # Data files
 *.faiss
 chunks/*.pickle
 chroma_data/
 *.rdb
+*.gz
 
 # Output directories
 booknlp/output/
 
 # Log files
-logs/*.log*
+*.log*
 
 # JSON files
 *.json
 
 # HTML files
-quality_test_results.html
+tests/*.html
+
+# Cover images
+images/**/*.jpg
+images/**/*.png
 
 # Node modules
 node_modules/
@@ -41,3 +48,5 @@ node_modules/
 !requirements.txt
 !series.example.yml
 !entity_editor/*.json
+!prompts.example.yml
+!images/books/.gitkeep

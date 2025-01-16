@@ -21,20 +21,17 @@ Note:
     - Install all dependencies (Flask, etc.) before running.
 """
 
-from flask import Flask, jsonify, request, render_template
+from flask import Flask, jsonify, request, render_template, send_from_directory
 from flask_cors import CORS, cross_origin
-from story_sage.story_sage import StorySage
-from story_sage.story_sage_conversation import StorySageConversation
-from story_sage.data_classes.story_sage_config import StorySageConfig
+from story_sage import StorySage, StorySageConversation, StorySageConfig
 import yaml
 import os
-import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import warnings
 
 CONFIG_PATH = './config.yml'
-
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'  # Disable tokenizers parallelism to avoid warnings
 
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -42,9 +39,19 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 app = Flask(__name__)
 CORS(app)  # Enable Cross-Origin Resource Sharing for all routes
 
-# Configure logging
+
+def get_loggers_by_prefix(prefix: str) -> list[logging.Logger]:
+    loggers = []
+    for name, logger in logging.Logger.manager.loggerDict.items():
+        if isinstance(logger, logging.Logger) and name.startswith(prefix):
+            loggers.append(logger)
+    return loggers
+
+
 logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)  # Set the logging level to DEBUG for detailed output
+logger.setLevel(logging.WARN)
+
+# Configure logging
 
 # Set up logging formatter and handler
 log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -73,9 +80,14 @@ except Exception as e:
 
 # Initialize the StorySage engine with the provided configurations
 story_sage = StorySage(
-    config = STORY_SAGE_CONFIG
+    config = STORY_SAGE_CONFIG,
+    log_level=logging.DEBUG
 )
 
+loggers_with_prefix = get_loggers_by_prefix('story_sage')
+for component_logger in loggers_with_prefix:
+    component_logger.setLevel(logging.DEBUG) 
+    
 @app.route('/')
 def index():
     """Renders the main index page.
@@ -133,16 +145,15 @@ def invoke_story_sage():
         result, context, request_id, entities = story_sage.invoke(**payload)
         try:
             conversation.add_turn(question=data['question'], detected_entities=entities, 
-                                context=context, response=result, request_id=request_id)
+                                context=context, response=result)
         except Exception as e:
             logger.error(f"Error adding turn to conversation: {e}")
-            logger.error(f'Result: {result}\nContext: {context}\nRequest ID: {request_id}\nEntities: {entities}')
             raise e
         return jsonify({'result': result, 'context': context, 'request_id': request_id, 'conversation_id': str(conversation.conversation_id)})
     except Exception as e:
         # Log the error and return a server error response
         logger.error(f"Error invoking StorySage: {e}")
-        return jsonify({'error': 'Internal server error.'}), 500
+        return jsonify({'error': "I'm sorry, but I experienced an error trying to answer your question. Please let my creator know!"}), 500
 
 @app.route('/invoke', methods=['GET'])
 @cross_origin()
@@ -202,6 +213,13 @@ def feedback():
         # Log the error and return a server error response
         logger.error(f"Error processing feedback: {e}")
         return jsonify({'error': 'Internal server error.'}), 500
+    finally:
+        if e:
+            raise e
+    
+@app.route('/images/<filename>')
+def serve_image(filename):
+    return send_from_directory('images', filename)
 
 if __name__ == '__main__':
     # Run the Flask application on port 5010 with debugging enabled
