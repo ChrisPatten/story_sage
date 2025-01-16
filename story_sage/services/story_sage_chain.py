@@ -87,23 +87,19 @@ class StorySageChain:
         # Generate an optimized query for vector search
         if not self._generate_search_query():
             self.state.search_query = self.state.question
+        self.logger.debug(f'Search query: {self.state.search_query}')
+
+       #self.state.search_query = self.state.question
 
         # Get the initial context based on the generated search query
         self._get_summary_context()
-        self.logger.debug(f'Summary chunks: {self.state.summary_chunks}')
-
-        # Try to get context from vector store
-        while True:
-            if self._process_summary_chunks():
-                break
-            if self._get_context_from_chunks(exclude_summaries=True):
-                self.logger.debug(f'Got context from chunks')
-                break
-            if self._get_context_from_chunks(exclude_summaries=False):
-                self.logger.debug(f'Got context from full text')
-                break
-            if self._try_keyword_retrieval():
-                break
+        #self.logger.debug(f'Summary chunks: {self.state.summary_chunks["ids"]}')
+        
+        if self._get_relevant_chunks():
+            self.logger.debug(f'Target IDs: {self.state.target_ids}')
+            self._get_context_by_ids()
+        elif self._get_context_from_chunks(exclude_summaries=False):
+            self.logger.debug(f'Got context from full text')
 
         self.state.summary_chunks = None
 
@@ -111,7 +107,7 @@ class StorySageChain:
             if self.needs_clarification:
                 self.logger.debug('Generated clarifying question')
                 return self.state
-            self.logger.debug(f'Generated response: {self.state.answer}')
+            #self.logger.debug(f'Generated response: {self.state.answer}')
             return self.state
 
         self.logger.debug('Generating response from semantic search failed. Trying keyword search.')
@@ -121,7 +117,8 @@ class StorySageChain:
         if not self.state.answer:
             self.state.answer = "I'm sorry, I couldn't find an answer to that question."
         
-        return self.state
+        self.logger.debug(f'Final answer: {self.state.answer}')
+        return self.state or StorySageState(answer="I'm sorry, I couldn't find an answer to that question.")
 
     # Internal methods for steps in the chain
     def _get_context_filters(self) -> None:
@@ -138,11 +135,12 @@ class StorySageChain:
         """Retrieve context from the summary collection."""
         self.state.node_history.append('GetSummaryContext')
         context_filters = self.state.context_filters.copy()
-        context_filters['top_level_only'] = True
+        context_filters['top_level_only'] = False
         try:
             self.state.summary_chunks = self.raptor_retriever.retrieve_chunks(
                 query_str=self.state.search_query,
-                context_filters=context_filters
+                context_filters=context_filters,
+                n_results=15
             )
         except Exception as e:
             self.logger.error(f'Error retrieving summary context: {e}')
@@ -183,7 +181,7 @@ class StorySageChain:
         """
         self.state.node_history.append('GetContextByIDs')
         try:
-            results = self.raptor_retriever.get_by_ids(self.state.target_ids)
+            results = self.raptor_retriever.retrieve_from_hierarchy(self.state.target_ids)
         except Exception as e:
             self.logger.error(f'Error retrieving context by IDs: {e}')
             return False
@@ -249,6 +247,44 @@ class StorySageChain:
         
         self.state.context = self._get_context_from_result(results)
         return True
+    
+    def _get_relevant_chunks(self, threshold: int = 6) -> bool:
+        """Retrieve relevant chunks based on the current context.
+        
+        Args:
+            threshold: Number of chunks to retrieve
+            
+        Returns:
+            bool: True if relevant chunks were found, False otherwise
+        """
+        self.state.node_history.append('GetRelevantChunks')
+        try:
+            relevant_chunks: dict[str, int] = None
+            relevant_chunks, tokens = self.llm.evaluate_chunks(
+                question=self.state.question,
+                context=self.state.context,
+                conversation=self.state.conversation
+            )
+            # Remove any chunks from context that aren't in in_scope_chunks
+            self._add_usage(tokens)
+        except Exception as e:
+            self.logger.error(f'Error getting relevant chunks: {e}')
+            return False
+        
+        if not relevant_chunks:
+            return False
+        
+        try:
+            in_scope_chunks: list[str] = []
+            for chunk_key, score in relevant_chunks.items():
+                if score >= threshold and re.match(VALID_CHUNK_ID_PATTERN, chunk_key):
+                    in_scope_chunks.append(chunk_key)
+        except:
+            self.logger.error('Error filtering relevant chunks. Keys:', relevant_chunks)
+            return False
+    
+        self.state.target_ids = in_scope_chunks
+        return True
 
     def _generate(self) -> bool:
         """Generate response using LLM based on current context and question.
@@ -285,7 +321,7 @@ class StorySageChain:
         Returns:
             List<StorySageContext]: List of context objects sorted by chunk ID
         """
-        self.logger.debug(f'Getting context from result: {results}')
+        self.logger.debug(f'Getting context from result: {results["ids"]}')
         try:
             results['ids'] = flatten_nested_list(results['ids'])
             results['metadatas'] = flatten_nested_list(results['metadatas'])

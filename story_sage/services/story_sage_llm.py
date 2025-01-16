@@ -125,8 +125,48 @@ class StorySageLLM:
             )
             result: CompletionResult = response.choices[0].message.parsed
             tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
-            self.logger.debug(result)
+            #self.logger.debug(result)
             return (result.response, result.has_answer, result.follow_up, tokens)
+        except Exception as e:
+            raise Exception(f"Error getting completion from OpenAI: {str(e)}")
+        
+    def evaluate_chunks(self, context: Dict[str, str], question: str, 
+                        conversation: StorySageConversation = None, 
+                        model: str = None, **kwargs) -> Tuple[str, _UsageType]:
+        """Evaluates the relevance of document chunks to a given question.
+
+        Args:
+            context (Dict[str, str]): Dictionary mapping chunk IDs to their summaries
+            question (str): User's question to evaluate chunks for
+            conversation (StorySageConversation, optional): Previous conversation history. Defaults to None
+            model (str, optional): OpenAI model to use. Defaults to config's model
+            **kwargs: Additional arguments passed to OpenAI API
+
+        Returns:
+            Tuple[str, _UsageType]: Contains:
+                - evaluation: Evaluation of chunk relevance
+                - tokens: Number of tokens used in the turn
+
+        Raises:
+            Exception: If OpenAI API call fails
+        """
+        
+        class EvaluationResult(BaseModel):
+            evaluation: dict[str, int]
+
+        summaries = '\n'.join([f"- {id}: {doc}" for id, doc in context.items()])
+        prompt_formatter = {'chunks': summaries, 'question': question}
+        messages = self._set_up_prompt('evaluate_chunks_relevance', prompt_formatter, conversation)
+        
+        try:
+            response = self.client.beta.chat.completions.parse(
+                model=model or self.config.completion_model,
+                messages=messages,
+                response_format=EvaluationResult
+            )
+            result: EvaluationResult = response.choices[0].message.parsed
+            tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
+            return result, tokens
         except Exception as e:
             raise Exception(f"Error getting completion from OpenAI: {str(e)}")
 

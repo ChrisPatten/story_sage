@@ -50,9 +50,6 @@ def get_loggers_by_prefix(prefix: str) -> list[logging.Logger]:
 
 logger = logging.getLogger()
 logger.setLevel(logging.WARN)
-loggers_with_prefix = get_loggers_by_prefix('story_sage')
-for component_logger in loggers_with_prefix:
-    component_logger.setLevel(logging.DEBUG) 
 
 # Configure logging
 
@@ -87,6 +84,10 @@ story_sage = StorySage(
     log_level=logging.DEBUG
 )
 
+loggers_with_prefix = get_loggers_by_prefix('story_sage')
+for component_logger in loggers_with_prefix:
+    component_logger.setLevel(logging.DEBUG) 
+    
 @app.route('/')
 def index():
     """Renders the main index page.

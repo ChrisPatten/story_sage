@@ -35,7 +35,7 @@ booknlp/output/
 *.json
 
 # HTML files
-tests/quality_test_results.html
+tests/*.html
 
 # Cover images
 images/**/*.jpg

@@ -139,7 +139,7 @@ class StorySageRetriever:
         # Initialize the logger for this module
         self.logger = logger or logging.getLogger(__name__)
 
-    def retrieve_chunks(self, query_str, context_filters: dict) -> QueryResult:
+    def retrieve_chunks(self, query_str, context_filters: dict, n_results: int = None) -> QueryResult:
         """Retrieves text chunks relevant to the query and context.
 
         Searches the vector store for text chunks that match the query and context filters.
@@ -173,6 +173,7 @@ class StorySageRetriever:
         """
         # Log the incoming query and filters for debugging
         self.logger.debug(f"Retrieving chunks with query: {query_str}, context_filters: {context_filters}")
+        n_results = n_results or self.n_chunks
 
         if not context_filters:
             raise ValueError("Context filters are required to retrieve relevant chunks.")
@@ -184,7 +185,7 @@ class StorySageRetriever:
         # Query the vector store with the combined filter and retrieve the results
         query_result = self.vector_store.query(
             query_texts=[query_str],  # The user's query
-            n_results=self.n_chunks,  # Number of results to return
+            n_results=n_results,  # Number of results to return
             include=['metadatas', 'documents'],  # Include metadata and documents in the results
             where=combined_filter  # Apply the combined filter
         )
