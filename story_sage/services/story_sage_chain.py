@@ -199,34 +199,72 @@ class StorySageChain:
         """Initialize context filters based on current state for document retrieval."""
         self.logger.debug('Initializing context filters')
         self.state.node_history.append('GetContextFilters')
+        
+        # Default filters that apply to all queries
         self.state.context_filters = {
             'entities': self.state.entities,
             'series_id': self.state.series_id,
             'book_number': self.state.book_number,
             'chapter_number': self.state.chapter_number
         }
-    
+        
+        # Check for temporal aspects in the question
+        try:
+            temporal_result, tokens = self.llm.detect_temporal_query(
+                question=self.state.question,
+                conversation=self.state.conversation
+            )
+            self._add_usage(tokens)
+            
+            if temporal_result.is_temporal:
+                if temporal_result.query_type == 'first':
+                    # For "first" queries, sort results chronologically
+                    self.state.sort_order = 'chronological'
+                elif temporal_result.query_type == 'current':
+                    # For "current" queries, sort in reverse to get most recent first
+                    self.state.sort_order = 'reverse_chronological'
+                elif temporal_result.query_type == 'specific_point':
+                    # For specific points, override book/chapter filters if provided
+                    if temporal_result.book_number is not None:
+                        self.state.context_filters['book_number'] = temporal_result.book_number
+                    if temporal_result.chapter_number is not None:
+                        self.state.context_filters['chapter_number'] = temporal_result.chapter_number
+            else:
+                self.state.sort_order = None
+        except Exception as e:
+            self.logger.error(f"Error detecting temporal query: {e}")
+            self.state.sort_order = None
+
     def _get_initial_context(self) -> bool:
         """Retrieve context from the summary collection."""
         self.logger.debug('Retrieving summary context')
         self.state.node_history.append('GetSummaryContext')
         context_filters = self.state.context_filters.copy()
         context_filters['top_level_only'] = self.state.needs_overview
+        
         try:
-            self.state.summary_chunks = self.raptor_retriever.retrieve_chunks(
+            chunks = self.raptor_retriever.retrieve_chunks(
                 query_str=self.state.search_query,
                 context_filters=context_filters,
-                n_results=25 if self.state.needs_overview else 10
+                n_results=25 if self.state.needs_overview else 10,
+                sort_order=self.state.sort_order
             )
-            self.logger.debug(f'Summary chunks retrieved: {len(self.state.summary_chunks)}')
-            if len(self.state.summary_chunks) < 1:
+            
+            # Add null check and fallback
+            if chunks is None:
+                self.logger.warning('Retrieved chunks were None, defaulting to empty dict')
+                self.state.summary_chunks = {}
                 return False
-            return True
+                
+            self.state.summary_chunks = chunks
+            self.logger.debug(f'Summary chunks retrieved: {len(self.state.summary_chunks)}')
+            return len(self.state.summary_chunks) > 0
+            
         except Exception as e:
             self.logger.error(f'Error retrieving summary context: {e}')
-            self.state.summary_chunks = []
+            self.state.summary_chunks = {}
             return False
-        
+
     def _evaluate_chunks(self, context_chunks: Dict[str, str]) -> Tuple[List[str], Optional[str]]:
         """Combined chunk evaluation and selection."""
         result: ChunkEvaluationResult

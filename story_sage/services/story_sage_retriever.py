@@ -140,37 +140,18 @@ class StorySageRetriever:
         # Initialize the logger for this module
         self.logger = logger or logging.getLogger(__name__)
 
-    def retrieve_chunks(self, query_str, context_filters: dict, n_results: int = None) -> QueryResult:
+    def retrieve_chunks(self, query_str, context_filters: dict, n_results: int = None, 
+                       sort_order: str = None) -> QueryResult:
         """Retrieves text chunks relevant to the query and context.
 
-        Searches the vector store for text chunks that match the query and context filters.
-        Uses a two-step approach: first tries with all filters including entities,
-        then falls back to broader search without entity filters if no results are found.
-
         Args:
-            query_str (str): The user's query string (e.g., "What happened to John in the forest?")
-            context_filters (dict): Filters to narrow down the search scope, containing:
-                - book_number (int): The current book number
-                - chapter_number (int): The current chapter number
-                - series_id (int): The ID of the book series
-                - entities (list, optional): List of entity IDs to filter by
-
-        Returns:
-            QueryResult: A ChromaDB query result containing:
-                - documents: List of relevant text chunks
-                - metadatas: List of metadata for each chunk
-                - distances: Similarity scores
-                - ids: Unique IDs for each chunk
-
-        Example:
-            >>> context = {
-            ...     'book_number': 2,
-            ...     'chapter_number': 15,
-            ...     'series_id': 1,
-            ...     'entities': ['character_123', 'location_456']
-            ... }
-            >>> result = retriever.retrieve_chunks("What happened in the forest?", context)
-            >>> print(result['documents'][0])  # First matching text chunk
+            query_str (str): The user's query string
+            context_filters (dict): Filters to narrow down the search scope
+            n_results (int, optional): Number of results to return
+            sort_order (str, optional): How to sort results:
+                - 'chronological': Sort by book/chapter ascending
+                - 'reverse_chronological': Sort by book/chapter descending
+                - None: Sort by similarity score (default)
         """
         # Log the incoming query and filters for debugging
         self.logger.debug(f"Retrieving chunks with query: {query_str}, context_filters: {context_filters}")
@@ -190,6 +171,27 @@ class StorySageRetriever:
             include=['metadatas', 'documents'],  # Include metadata and documents in the results
             where=combined_filter  # Apply the combined filter
         )
+
+        # Apply temporal sorting if requested
+        if sort_order and len(query_result['ids'][0]) > 0:
+            results_with_meta = list(zip(
+                query_result['ids'][0],
+                query_result['documents'][0],
+                query_result['metadatas'][0],
+                query_result['distances'][0]
+            ))
+            
+            if sort_order == 'chronological':
+                results_with_meta.sort(key=lambda x: (x[2]['book_number'], x[2]['chapter_number']))
+            elif sort_order == 'reverse_chronological':
+                results_with_meta.sort(key=lambda x: (x[2]['book_number'], x[2]['chapter_number']), reverse=True)
+                
+            # Reconstruct query result
+            query_result['ids'] = [[x[0] for x in results_with_meta]]
+            query_result['documents'] = [[x[1] for x in results_with_meta]]
+            query_result['metadatas'] = [[x[2] for x in results_with_meta]]
+            query_result['distances'] = [[x[3] for x in results_with_meta]]
+
         if len(query_result['ids'][0]) < 1:
             self.logger.warning(f'No results found with query {query_str} and filters {combined_filter}')
         # Log the retrieved documents for debugging purposes
@@ -309,6 +311,16 @@ class StorySageRetriever:
         if len(context_filters.get('entities', [])) > 0:
             for entity_id in context_filters['entities']:
                 where_filter = _safe_add_and(where_filter, {'entities': entity_id})
+
+        # Handle temporal constraints
+        max_book = context_filters.get('max_book')
+        max_chapter = context_filters.get('max_chapter')
+        
+        if max_book is not None:
+            where_filter = _safe_add_and(where_filter, {'book_number': {'$lte': max_book}})
+            
+        if max_chapter is not None and book_number == max_book:
+            where_filter = _safe_add_and(where_filter, {'chapter_number': {'$lte': max_chapter}})
 
         return where_filter
     

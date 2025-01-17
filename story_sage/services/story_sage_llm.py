@@ -69,6 +69,13 @@ class QueryResult(BaseModel):
 class RefinedQuestionResult(BaseModel):
     refined_question: str
 
+class TemporalQueryResult(BaseModel):
+    is_temporal: bool
+    query_type: str  # 'current', 'first', 'specific_point'
+    book_number: Optional[int]
+    chapter_number: Optional[int]
+    relative_position: Optional[str]  # 'before', 'after', 'at'
+
 class StorySageLLM:
     """A class to handle LLM operations for document Q&A using OpenAI's API.
     
@@ -379,6 +386,35 @@ class StorySageLLM:
             self.logger.error("Failed to refine followup question: %s", str(e), exc_info=True)
             raise
 
+    def detect_temporal_query(self, question: str, 
+                            conversation: StorySageConversation = None,
+                            model: str = None, **kwargs) -> Tuple[TemporalQueryResult, _UsageType]:
+        """Detects if a question is asking about a specific point in time.
+
+        Args:
+            question (str): The user's question
+            conversation (StorySageConversation, optional): Conversation history
+            model (str, optional): OpenAI model to use
+
+        Returns:
+            Tuple[TemporalQueryResult, _UsageType]: Contains temporal query information and token usage
+        """
+        self.logger.info("Detecting temporal aspects in question: '%s'", question[:100])
+        
+        messages = self._set_up_prompt('detect_temporal_query', {'question': question}, conversation)
+
+        try:
+            response = self.client.beta.chat.completions.parse(
+                model=model or self.config.completion_model,
+                messages=messages,
+                response_format=TemporalQueryResult
+            )
+            result: TemporalQueryResult = response.choices[0].message.parsed
+            tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
+            return result, tokens
+        except Exception as e:
+            self.logger.error("Failed to detect temporal query: %s", str(e), exc_info=True)
+            raise
     
     def _get_conversation_turns(self, conversation: StorySageConversation) -> List[Dict[str, str]]:
         """Formats conversation history into OpenAI message format.

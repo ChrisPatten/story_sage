@@ -28,6 +28,10 @@ class StorySageState():
         conversation (StorySageConversation): Conversation history object. Defaults to None.
         node_history (List[str]): History of traversed nodes. Defaults to empty list.
         tokens_used (int): Count of tokens used in the current session. Defaults to 0.
+        sort_order (str): How to sort retrieved chunks:
+            - 'chronological': Sort by book/chapter ascending
+            - 'reverse_chronological': Sort by book/chapter descending
+            - None: Sort by similarity score (default)
 
     Example:
         >>> state = StorySageState(
@@ -57,6 +61,7 @@ class StorySageState():
     node_history: List[str] = field(default_factory=list)  # Track traversed nodes
     tokens_used: Tuple[int, int] = (0, 0)  # Token usage tracking
     needs_overview: bool = False  # Flag to indicate if an overview is needed
+    sort_order: str = None  # Add this field for temporal query sorting
 
     def get_cost(self) -> str:
         cost = (self.tokens_used[0]/1000000*INPUT_TOKENS_CPM) + (self.tokens_used[1]/1000000*OUTPUT_TOKENS_CPM)
