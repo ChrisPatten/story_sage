@@ -35,13 +35,14 @@ Example:
     # Result: ["chunk1"], "refined search query"
 """
 
-from openai import OpenAI
-from typing import Dict, List, Tuple, TypeAlias
+from openai import OpenAI, BadRequestError
+from typing import Dict, List, Tuple, TypeAlias, Optional
 from ..models import StorySageConfig, StorySageConversation, StorySageContext
 from pydantic import BaseModel
 import httpx
 import logging
 from ..utils.junk_drawer import EmojiFormatter
+import json
 
 _UsageType: TypeAlias = Tuple[int, int]
 """Type alias for usage information tuple containing:
@@ -49,8 +50,7 @@ _UsageType: TypeAlias = Tuple[int, int]
     prompt_tokens: Number of tokens in the prompt
 """
 
-class EvaluationResult(BaseModel):
-    evaluation: str
+
 
 class StorySageLLM:
     """A class to handle LLM operations for document Q&A using OpenAI's API.
@@ -141,47 +141,76 @@ class StorySageLLM:
             self.logger.error("Failed to generate response: %s", str(e), exc_info=True)
             raise
 
-    def evaluate_chunks(self, context: Dict[str, str], question: str, 
-                        conversation: StorySageConversation = None, 
-                        model: str = None, **kwargs) -> Tuple[str, _UsageType]:
-        """Evaluates the relevance of document chunks to a given question.
-
-        Args:
-            context (Dict[str, str]): Dictionary mapping chunk IDs to their summaries
-            question (str): User's question to evaluate chunks for
-            conversation (StorySageConversation, optional): Previous conversation history. Defaults to None
-            model (str, optional): OpenAI model to use. Defaults to config's model
-            **kwargs: Additional arguments passed to OpenAI API
-
+    def evaluate_chunks(self, context: Dict[str, str], question: str,
+                   conversation: StorySageConversation = None,
+                   model: str = None, **kwargs) -> Tuple[dict, _UsageType]:
+        """Combined chunk evaluation method.
+        
         Returns:
-            Tuple[str, _UsageType]: Contains:
-                - evaluation: Evaluation of chunk relevance
-                - tokens: Number of tokens used in the turn
-
-        Raises:
-            Exception: If OpenAI API call fails
+            Tuple[ChunkEvaluationResult, _UsageType]: Evaluation results and token usage
         """
+
+        self.logger.info("Evaluating chunks for question: '%s'", question[:100])
         
-        self.logger.info("Evaluating %d chunks for relevance", len(context))
-        self.logger.debug("Question: '%s'", question[:100])
-        
-        if not context:
-            self.logger.error("Empty context provided for evaluation")
-            raise ValueError("Context dictionary cannot be empty")
         summaries = '\n'.join([f"- {id}: {doc}" for id, doc in context.items()])
         prompt_formatter = {'chunks': summaries, 'question': question}
-        messages = self._set_up_prompt('evaluate_chunks_relevance', prompt_formatter, conversation)
+        messages = self._set_up_prompt('evaluate_chunks', prompt_formatter, conversation)
+        response_format_object = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "evaluate_chunks",
+                "description": "Evaluates document chunks for relevancy to a user's question.",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "chunk_scores": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "chunk_id": {
+                                            "type": "string",
+                                            "description": "The ID of the document chunk"
+                                        },
+                                        "score": {
+                                            "type": "integer",
+                                            "description": "The relevance score of the chunk from 0-9"
+                                        }
+                                    },
+                                    "required": ["chunk_id", "score"],
+                                    "additionalProperties": False
+                                }
+                        },
+                        "secondary_query": {
+                            "type": ["string", "null"],
+                            "description": "A refined search query based on the user's question"
+                        }
+                        
+                    },
+                    "required": ["chunk_scores", "secondary_query"],
+                    "additionalProperties": False
+                },
+                "strict": True
+            }
+        }
         
         try:
             response = self.client.beta.chat.completions.parse(
                 model=model or self.config.completion_model,
                 messages=messages,
-                response_format=EvaluationResult
+                response_format=response_format_object
             )
-            result: EvaluationResult = response.choices[0].message.parsed
+            try:
+                result: Dict = json.loads(response.choices[0].message.content)
+                self.logger.debug(f'Evaluate Chunks result: {result}')
+            except Exception as e:
+                self.logger.error("Failed to parse response content: %s", str(e), exc_info=True)
+                raise
             tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
-            self.logger.debug("Chunk evaluation complete, tokens used: %d", response.usage.total_tokens)
             return result, tokens
+        except BadRequestError as e:
+            self.logger.error(response)
+            raise
         except Exception as e:
             self.logger.error("Failed to evaluate chunks: %s", str(e), exc_info=True)
             raise
@@ -410,7 +439,7 @@ class StorySageLLM:
             List[Dict[str, str]]: List of message dictionaries with 'role' and 'content'
         """
         turns = []
-        for turn in conversation.turns:
+        for turn in conversation.turns[:3]:
             turns.append({
                 'role': 'user',
                 'content': turn.question

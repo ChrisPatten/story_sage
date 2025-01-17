@@ -99,6 +99,10 @@ loggers_with_prefix = get_loggers_by_prefix('story_sage')
 for component_logger in loggers_with_prefix:
     component_logger.setLevel(logging.DEBUG)
 
+loggers_with_prefix = get_loggers_by_prefix('openai')
+for component_logger in loggers_with_prefix:
+    component_logger.setLevel(logging.DEBUG)
+
 @app.route('/')
 def index():
     """Renders the main index page.
@@ -152,7 +156,8 @@ def invoke_story_sage():
             'question': data['question'],
             'book_number': data['book_number'],
             'chapter_number': data['chapter_number'],
-            'series_id': data['series_id']
+            'series_id': data['series_id'],
+            'conversation': conversation
         }
         logger.info("Invoking StorySage with payload: %s", payload)
         result, context, request_id, entities = story_sage.invoke(**payload)

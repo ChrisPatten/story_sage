@@ -23,9 +23,9 @@ logging.basicConfig(
 )
 
 
-RERUN = True
-SERIES_METADATA_NAME = 'throne_of_glass'
-book_nums = [1, 2, 3]
+CREATE_CHUNKS = False
+SERIES_METADATA_NAME = 'wheel_of_time'
+book_nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
 file_patterns = [f'./books/{SERIES_METADATA_NAME}/{str(num).zfill(2)}_*.txt' for num in book_nums]
 
 os.environ['TOKENIZERS_PARALLELISM'] = "false"
@@ -47,7 +47,7 @@ retriever = StorySageRetriever(chroma_path=ssconfig.chroma_path, chroma_collecti
 
 # %%
 
-if RERUN and __name__ == '__main__':
+if CREATE_CHUNKS and __name__ == '__main__':
     for idx, pattern in enumerate(file_patterns):
         processed_file_name = f'./chunks/{SERIES_METADATA_NAME}/raptor_chunks/{SERIES_METADATA_NAME}.json'
         results: _RaptorResults = raptor.process_texts(pattern)

@@ -200,7 +200,7 @@ class StorySage:
             
             # Log cost metrics
             cost = result.get_cost()
-            self.logger.info("Processing cost: $%.4f", cost)
+            self.logger.info(f"Processing cost: {cost}")
             
             return result.answer, result.context, None, result.entities
             

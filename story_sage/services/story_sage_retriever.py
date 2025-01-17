@@ -1,6 +1,6 @@
 # Import necessary libraries and modules
 import logging  # For logging debug information
-from typing import List, Union, Literal  # For type annotations
+from typing import List, Union, Tuple  # For type annotations
 import torch
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -10,6 +10,7 @@ from chromadb.api import Collection
 from chromadb.api.types import GetResult, QueryResult
 from story_sage.utils import Chunk, ChunkMetadata
 from story_sage.utils.raptor import _RaptorResults, RaptorProcessor
+from copy import copy
 
 
 class StorySageEmbedder(EmbeddingFunction):
@@ -311,50 +312,52 @@ class StorySageRetriever:
 
         return where_filter
     
-    def _recursive_retrieve_from_hierarchy(self, parent_ids: List[str]) -> List[str]:
-
-        parents = self.vector_store.get(
-            ids=parent_ids,
-            include=['metadatas']
-        )
-
-        children_ids = set()
-        for parent_metadata in parents['metadatas']:
-            for metadata in parent_metadata:
-                children_ids.update(self._recursive_retrieve_from_hierarchy(metadata['children'].split(',')))
-
-        children_ids = list(children_ids)
-        
-        if len(children_ids) == 0:
-            return parent_ids
-        else:
-            return children_ids
+            
     
-    def retrieve_from_hierarchy(self, parent_ids: List[str]) -> QueryResult:
-        """Finds top-level text chunks, then returns the lowest level children for each of the n_top_level summaries.
+    def _recursive_retrieve_from_hierarchy(self, parent_ids: List[str]) -> List[str]:
+        """Recursively retrieves the ultimate children of the given parent IDs.
 
         Args:
-            context_filters (dict): Filters to narrow down the search scope, containing:
-                - book_number (int): The current book number
-                - chapter_number (int): The current chapter number
-                - series_id (int): The ID of the book series
-                - entities (list, optional): List of entity IDs to filter by
-            n_top_level (int): Number of top-level summaries to retrieve
+            parent_ids (List[str]): List of parent IDs to start the search from.
+
+        Returns:
+            List[str]: List of ultimate children IDs.
+        """
+        self.logger.debug(f"Recursively retrieving children for parent IDs: {parent_ids}")
+        
+        children_ids = set()
+        for parent_id in parent_ids:
+            result = self.vector_store.get(ids=[parent_id], include=['metadatas'])
+            if result['metadatas'][0]['children']:
+                child_ids = result['metadatas'][0]['children'].split(',')
+                children_ids.update(self._recursive_retrieve_from_hierarchy(child_ids))
+            else:
+                children_ids.add(parent_id)
+        
+        return list(children_ids)
+
+    def retrieve_from_hierarchy(self, parent_ids: List[str]) -> QueryResult:
+        """Finds the ultimate children of the provided parent IDs.
+
+        Args:
+            parent_ids (List[str]): List of parent IDs to start the search from.
 
         Returns:
             QueryResult: A ChromaDB query result containing:
-                - documents: List of text chunks containing the top-level summaries
+                - documents: List of text chunks containing the ultimate children
                 - metadatas: List of metadata for each chunk
                 - ids: Unique IDs for each chunk
-
         """
-        children_ids = self._recursive_retrieve_from_hierarchy(parent_ids)
+        self.logger.debug(f"Retrieving ultimate children from parent IDs: {parent_ids}")
+        
+        ultimate_children_ids = self._recursive_retrieve_from_hierarchy(parent_ids)
         
         results = self.vector_store.get(
-            ids=children_ids,
-            include=['metadatas']
+            ids=ultimate_children_ids,
+            include=['metadatas', 'documents']
         )
-
+        
+        self.logger.debug(f"Retrieved ultimate children documents: {results['ids']}")
         return results
 
     def first_pass_query(self, query_str: str, context_filters: dict) -> dict[str, str]:
@@ -460,10 +463,20 @@ class StorySageRetriever:
                             if chunk.chunk_key in self.vector_store.get(ids=[chunk.chunk_key])['ids']:
                                 continue
                         except Exception:  # Handle case where chunk doesn't exist
-                            pass
+                            raise
 
                         if not chunk.chunk_key.startswith('series_'):
                             chunk.chunk_key = f'series_{series_id}|{chunk.chunk_key}'
+                        child_chunks: List[str] = copy(chunk.children)
+                        for idx, child_key in enumerate(child_chunks):
+                            if not child_key.startswith('series_'):
+                                child_key = f'series_{series_id}|{child_key}'
+                                chunk.children[idx] = child_key
+                        parent_chunks: List[str] = copy(chunk.parents)
+                        for idx, parent_key in enumerate(parent_chunks):
+                            if not parent_key.startswith('series_'):
+                                parent_key = f'series_{series_id}|{parent_key}'
+                                chunk.parents[idx] = parent_key
                             
                         ids.append(chunk.chunk_key)
                         documents.append(str.lower(chunk.text))
