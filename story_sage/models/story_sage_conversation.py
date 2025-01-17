@@ -3,6 +3,7 @@ from typing import List, Tuple
 import uuid
 import redis
 import logging
+import time
 from .story_sage_context import StorySageContext
 
 logger = logging.getLogger(__name__)
@@ -122,7 +123,8 @@ class StorySageConversation():
     """
 
     def __init__(self, conversation_id: str = None, redis: redis.Redis = None, redis_ex: int = 3600):
-        """
+        """Initialize a new conversation session.
+
         Args:
             conversation_id (str, optional): Unique identifier for the conversation. Defaults to None.
             redis (redis.Redis, optional): Redis client for caching conversation data. Defaults to None.
@@ -134,104 +136,141 @@ class StorySageConversation():
         if conversation_id is None:
             self.conversation_id = uuid.uuid4()
             self.turns: List[TurnType] = []
+            logger.info("Created new conversation with ID: %s", self.conversation_id)
         else:
             try:
                 self.conversation_id = uuid.UUID(conversation_id)
+                logger.info("Initializing existing conversation: %s", self.conversation_id)
             except ValueError:
+                logger.error("Invalid conversation ID provided: %s", conversation_id)
                 raise ValueError("conversation_id must be a valid UUID")
             
             if redis is not None:
                 self.turns = self._load_from_cache()
+                logger.debug("Loaded %d turns from cache for conversation %s", 
+                           len(self.turns), self.conversation_id)
             else:
                 self.turns = []
+                logger.debug("No Redis cache provided, starting with empty conversation")
 
     def add_turn(self, question: str, context: List[StorySageContext],
-                 response: str, detected_entities: List[str] = []) -> None:
-        """Adds a new turn to the conversation and persists it to cache if Redis is configured.
+                 response: str, detected_entities: List[str] = None) -> None:
+        """Add a new turn to the conversation.
 
         Args:
-            question (str): The user's question or input.
-            detected_entities (List[str]): Entities detected in the question.
-            context (List[str]): Context used for response generation.
-            response (str): The system's response.
-
-        Example:
-            conversation.add_turn(
-                question="Who is the antagonist?",
-                detected_entities=["antagonist"],
-                context=["The main antagonist is..."],
-                response="The story's main antagonist is...",
-            )
+            question (str): The user's question
+            context (List[StorySageContext]): Context used for response
+            response (str): System's response
+            detected_entities (List[str], optional): Detected entities. Defaults to empty list.
         """
+        detected_entities = detected_entities or []
         next_sequence = len(self.turns)
-        turn = TurnType(question=question, detected_entities=detected_entities, 
-                        context=context, response=response,
-                        sequence=next_sequence)
+        
+        logger.info("Adding turn %d to conversation %s", next_sequence, self.conversation_id)
+        logger.debug("Question: '%s', Entities: %s", question[:100], detected_entities)
+        
+        turn = TurnType(
+            question=question, 
+            detected_entities=detected_entities,
+            context=context, 
+            response=response,
+            sequence=next_sequence
+        )
         self.turns.append(turn)
-        self._save_to_cache()
+        
+        # Persist to cache if Redis is configured
+        if self.redis:
+            start_time = time.time()
+            self._save_to_cache()
+            duration = time.time() - start_time
+            logger.debug("Saved turn to cache in %.2fs", duration)
 
-    def get_history(self) -> List[Tuple[str, List[str], List[str], str, str, int]]:
-        """Retrieves the complete conversation history as a list of tuples.
+    def get_history(self) -> List[Tuple[str, List[str], List[StorySageContext], str]]:
+        """Retrieve complete conversation history.
 
         Returns:
-            List[Tuple[str, List[str], List[str], str, str, int]]: List of tuples containing
+            List[Tuple[str, List[str], List[StorySageContext], str]]: List of tuples containing
                 (question, detected_entities, context, response) for each turn.
-
-        Example:
-            history = conversation.get_history()
-            # Returns: [
-            #     ("Who is the antagonist?", ["antagonist"], ["The main antagonist is..."],
-            #      "The story's main antagonist is...", "req_124")
-            # ]
         """
-        return [(turn.question, turn.detected_entities, turn.context, turn.response) for turn in self.turns]
+        logger.debug("Retrieving history for conversation %s (%d turns)", 
+                    self.conversation_id, len(self.turns))
+        return [(turn.question, turn.detected_entities, turn.context, turn.response) 
+                for turn in self.turns]
     
     def _load_from_cache(self) -> List[TurnType]:
-        """Loads conversation history from cache.
+        """Load conversation history from Redis cache.
 
         Returns:
-            List[TurnType]: List of turns in the conversation.
+            List[TurnType]: List of conversation turns.
+            
+        Raises:
+            redis.RedisError: If there's an error accessing Redis
+            json.JSONDecodeError: If cached data is invalid
         """
         if not self.redis:
             return []
         
         key = f"conversation:{self.conversation_id}"
-        data = self.redis.get(key)
-        if data:
+        start_time = time.time()
+        
+        try:
+            data = self.redis.get(key)
+            if not data:
+                logger.debug("No cached data found for conversation %s", self.conversation_id)
+                return []
+            
             turns = json.loads(data)
+            # Convert context dictionaries back to StorySageContext objects
             for turn in turns:
                 turn['context'] = [StorySageContext.from_dict(c) for c in turn['context']]
-            return [TurnType(turn['question'], turn['detected_entities'], turn['context'], turn['response'], turn['sequence']) for turn in turns]
-        else:
-            return []
+            
+            duration = time.time() - start_time
+            logger.info("Loaded %d turns from cache in %.2fs", len(turns), duration)
+            return [TurnType(**turn) for turn in turns]
+            
+        except (redis.RedisError, json.JSONDecodeError) as e:
+            logger.error("Failed to load conversation from cache: %s", str(e), 
+                        exc_info=True)
+            raise
         
     def _save_to_cache(self) -> None:
-        """Saves conversation history to cache."""
+        """Save conversation history to Redis cache.
+        
+        Raises:
+            redis.RedisError: If there's an error accessing Redis
+            json.JSONEncodeError: If turns cannot be serialized
+        """
         if not self.redis:
             return
         
         key = f"conversation:{self.conversation_id}"
-        data = json.dumps([turn.to_json() for turn in self.turns])
-        self.redis.set(key, data, ex=self.redis_ex)
+        start_time = time.time()
+        
+        try:
+            data = json.dumps([turn.to_json() for turn in self.turns])
+            self.redis.set(key, data, ex=self.redis_ex)
+            
+            duration = time.time() - start_time
+            logger.debug("Saved conversation to cache in %.2fs", duration)
+            
+        except (redis.RedisError, TypeError) as e:
+            logger.error("Failed to save conversation to cache: %s", str(e), 
+                        exc_info=True)
+            raise
 
-    def __str__(self) -> str:
-        conversation = []
-        for turn in self.turns:
-            conversation.append(f"HUMAN: {turn.question}")
-            conversation.append(f"COMPUTER: {turn.response}")
-        return '\n'.join(conversation)
-    
     def get_log(self) -> str:
-        """Returns the conversation log as a string.
+        """Get a formatted JSON log of the conversation.
 
         Returns:
-            str: A string representation of the conversation log.
+            str: JSON string containing the complete conversation history.
         """
-        conversation = []
-        for turn in self.turns:
-            conversation.append(turn.to_json())
-
-        return json.dumps(conversation, indent=4)
+        try:
+            conversation = [turn.to_json() for turn in self.turns]
+            return json.dumps(conversation, indent=4)
+        except Exception as e:
+            logger.error("Failed to generate conversation log: %s", str(e), 
+                        exc_info=True)
+            raise
 
 # Example usage:
 # redis_client = redis.Redis(host='localhost', port=6379, db=0)

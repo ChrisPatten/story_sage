@@ -1,13 +1,14 @@
 from dataclasses import dataclass, field
-from typing import List, Dict
+from typing import List, Dict, Optional
 from .story_sage_series import StorySageSeries
 from .story_sage_entity import StorySageEntityCollection
 import json
 import yaml
 import logging
 import redis
+import time
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 @dataclass
 class StorySageConfig:
@@ -96,9 +97,10 @@ class StorySageConfig:
                 }
             ]
         """
+        logger.debug("Converting %d series to JSON format", len(self.series))
         return [series.to_metadata_json() for series in self.series]
     
-    def get_series_by_meta_name(self, series_metadata_name: str) -> StorySageSeries:
+    def get_series_by_meta_name(self, series_metadata_name: str) -> Optional[StorySageSeries]:
         """Retrieves a series configuration by its metadata name.
 
         Args:
@@ -117,7 +119,11 @@ class StorySageConfig:
             >>> print(hp_series.series_id)
             'HP001'
         """
-        return next((series for series in self.series if series.series_metadata_name == series_metadata_name), None)
+        logger.debug("Looking up series by metadata name: %s", series_metadata_name)
+        series = next((s for s in self.series if s.series_metadata_name == series_metadata_name), None)
+        if series is None:
+            logger.warning("No series found with metadata name: %s", series_metadata_name)
+        return series
 
     @classmethod
     def from_config(cls, config: dict) -> 'StorySageConfig':
@@ -155,14 +161,23 @@ class StorySageConfig:
             >>> print(ssconfig.redis_ex)
             3600
         """
-        required_keys = ['OPENAI_API_KEY', 'CHROMA_PATH', 
-                         'SERIES_PATH', 'ENTITIES_PATH', 'N_CHUNKS', 'REDIS_URL', 'RAPTOR_COLLECTION',
-                         'REDIS_EXPIRE', 'PROMPTS_PATH', 'COMPLETION_MODEL', 'COMPLETION_TEMPERATURE',
-                         'COMPLETION_MAX_TOKENS']
-        for key in required_keys:
-            if key not in config:
-                raise ValueError(f"Config is missing required key: {key}")
+        logger.info("Initializing StorySageConfig from dictionary")
+        start_time = time.time()
 
+        # Validate required configuration keys
+        required_keys = [
+            'OPENAI_API_KEY', 'CHROMA_PATH', 'SERIES_PATH', 'ENTITIES_PATH', 
+            'N_CHUNKS', 'REDIS_URL', 'RAPTOR_COLLECTION', 'REDIS_EXPIRE', 
+            'PROMPTS_PATH', 'COMPLETION_MODEL', 'COMPLETION_TEMPERATURE',
+            'COMPLETION_MAX_TOKENS'
+        ]
+        
+        missing_keys = [key for key in required_keys if key not in config]
+        if missing_keys:
+            logger.error("Missing required configuration keys: %s", missing_keys)
+            raise ValueError(f"Config is missing required keys: {', '.join(missing_keys)}")
+
+        # Initialize base configuration
         ssconfig = StorySageConfig(
             openai_api_key=config['OPENAI_API_KEY'],
             chroma_path=config['CHROMA_PATH'],
@@ -173,29 +188,63 @@ class StorySageConfig:
             raptor_collection=config['RAPTOR_COLLECTION']
         )
 
-        # Load entities from ENTITIES_PATH
-        with open(config['ENTITIES_PATH'], 'r') as file:
-            entities_dict = json.load(file)
-            logger.debug(f"Loaded entities from {config['ENTITIES_PATH']}")
-            ssconfig.entities = {key: StorySageEntityCollection.from_dict(value) for key, value in entities_dict.items()}
-
-        # Load series from SERIES_PATH
-        with open(config['SERIES_PATH'], 'r') as file:
-            series_list = yaml.safe_load(file)
-            ssconfig.series = [StorySageSeries.from_dict(series) for series in series_list]
-
-        # Load redis connection
+        # Load entities
         try:
+            logger.info("Loading entities from %s", config['ENTITIES_PATH'])
+            entity_start = time.time()
+            with open(config['ENTITIES_PATH'], 'r') as file:
+                entities_dict = json.load(file)
+                ssconfig.entities = {
+                    key: StorySageEntityCollection.from_dict(value) 
+                    for key, value in entities_dict.items()
+                }
+            logger.info("Loaded %d entity collections in %.2fs", 
+                       len(ssconfig.entities), time.time() - entity_start)
+        except (json.JSONDecodeError, FileNotFoundError) as e:
+            logger.error("Failed to load entities: %s", str(e), exc_info=True)
+            raise
+
+        # Load series configurations
+        try:
+            logger.info("Loading series from %s", config['SERIES_PATH'])
+            series_start = time.time()
+            with open(config['SERIES_PATH'], 'r') as file:
+                series_list = yaml.safe_load(file)
+                ssconfig.series = [StorySageSeries.from_dict(series) for series in series_list]
+            logger.info("Loaded %d series in %.2fs", 
+                       len(ssconfig.series), time.time() - series_start)
+        except (yaml.YAMLError, FileNotFoundError) as e:
+            logger.error("Failed to load series: %s", str(e), exc_info=True)
+            raise
+
+        # Initialize Redis connection
+        try:
+            logger.info("Connecting to Redis at %s", config['REDIS_URL'])
+            redis_start = time.time()
             ssconfig.redis_instance = redis.Redis.from_url(config['REDIS_URL'])
             ssconfig.redis_ex = config['REDIS_EXPIRE']
-        except Exception as e:
-            logger.error(f"Failed to connect to Redis: {e}")  
+            # Test connection
+            ssconfig.redis_instance.ping()
+            logger.info("Redis connection established in %.2fs", 
+                       time.time() - redis_start)
+        except redis.RedisError as e:
+            logger.error("Failed to connect to Redis: %s", str(e), exc_info=True)
+            raise
 
-        # Load prompts from PROMPTS_PATH
-        with open(config['PROMPTS_PATH'], 'r') as file:
-            ssconfig.prompts = yaml.safe_load(file)
-            logger.debug(f"Loaded prompts from {config['PROMPTS_PATH']}")
+        # Load prompt templates
+        try:
+            logger.info("Loading prompts from %s", config['PROMPTS_PATH'])
+            prompt_start = time.time()
+            with open(config['PROMPTS_PATH'], 'r') as file:
+                ssconfig.prompts = yaml.safe_load(file)
+            logger.info("Loaded %d prompt templates in %.2fs", 
+                       len(ssconfig.prompts), time.time() - prompt_start)
+        except (yaml.YAMLError, FileNotFoundError) as e:
+            logger.error("Failed to load prompts: %s", str(e), exc_info=True)
+            raise
 
+        total_time = time.time() - start_time
+        logger.info("StorySageConfig initialization completed in %.2fs", total_time)
         return ssconfig
     
     @classmethod
@@ -217,6 +266,16 @@ class StorySageConfig:
             >>> print(ssconfig.openai_api_key)
             'sk-...'
         """
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
-        return cls.from_config(config)
+        logger.info("Loading configuration from file: %s", config_path)
+        try:
+            start_time = time.time()
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+            logger.debug("Configuration file loaded in %.2fs", time.time() - start_time)
+            return cls.from_config(config)
+        except FileNotFoundError:
+            logger.error("Configuration file not found: %s", config_path)
+            raise
+        except yaml.YAMLError as e:
+            logger.error("Invalid YAML in configuration file: %s", str(e), exc_info=True)
+            raise

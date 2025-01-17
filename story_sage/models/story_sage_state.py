@@ -56,6 +56,7 @@ class StorySageState():
     conversation: StorySageConversation = None  # Conversation history
     node_history: List[str] = field(default_factory=list)  # Track traversed nodes
     tokens_used: Tuple[int, int] = (0, 0)  # Token usage tracking
+    needs_overview: bool = False  # Flag to indicate if an overview is needed
 
     def get_cost(self) -> str:
         cost = (self.tokens_used[0]/1000000*INPUT_TOKENS_CPM) + (self.tokens_used[1]/1000000*OUTPUT_TOKENS_CPM)

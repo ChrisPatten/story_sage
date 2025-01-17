@@ -1,5 +1,6 @@
 import logging
 import uuid
+import time
 from typing import Tuple, Optional, Dict, List
 from .models import StorySageConfig, StorySageContext, StorySageState, StorySageConversation
 from .services import StorySageChain, StorySageRetriever
@@ -81,6 +82,7 @@ class StorySage:
         # Set up logging
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
+        self.logger.info("Initializing StorySage instance")
 
         # Initialize request_id
         self.request_id = None
@@ -91,10 +93,14 @@ class StorySage:
 
         # Initialize series info
         self.series_list = config.series
+        
+        self.logger.debug("Loaded %d series and %d entity collections", 
+                         len(self.series_list), len(self.entities))
 
-    def invoke(self, question: str, book_number: int = None, 
-               chapter_number: int = None, series_id: int = None,
-               conversation: StorySageConversation = None) -> Tuple[str, List[StorySageContext], str, List[str]]:
+    def invoke(self, question: str, book_number: Optional[int] = None, 
+               chapter_number: Optional[int] = None, series_id: Optional[int] = None,
+               conversation: Optional[StorySageConversation] = None
+               ) -> Tuple[str, List[StorySageContext], Optional[str], List[str]]:
         """Processes a question about the story and generates a contextual response.
 
         This method coordinates the retrieval of relevant context and the generation
@@ -152,7 +158,14 @@ class StorySage:
             ...     conversation=conv
             ... )
         """
-        self.logger.info(f"Processing question: {question}")
+        start_time = time.time()
+        self.logger.info("Processing question: '%s'", question[:100])
+        self.logger.debug("Context - Book: %s, Chapter: %s, Series: %s", 
+                         book_number, chapter_number, series_id)
+        
+        if conversation:
+            self.logger.debug("Using existing conversation with %d turns", 
+                            len(conversation.turns))
 
         # Initialize state with default values
         state = StorySageState(
@@ -163,21 +176,38 @@ class StorySage:
             conversation=conversation
         )
 
-        self.chain = StorySageChain(config=self.config, state=state, log_level=self.logger.level)
-
         try:
+            # Initialize processing chain
+            chain_start = time.time()
+            self.chain = StorySageChain(
+                config=self.config, 
+                state=state, 
+                log_level=self.logger.level
+            )
+            self.logger.debug("Chain initialization took %.2fs", 
+                            time.time() - chain_start)
+
             # Process the question through the chain
+            self.logger.info("Starting chain processing")
             result = self.chain.invoke()
             
-            # Log the results
-            self.logger.debug(f"Generated answer: {result.answer}")
-            self.logger.debug(f"Retrieved context: {len(result.context)}")
-            self.logger.info(f"Turn cost: {result.get_cost()}")
+            # Log completion and timing
+            duration = time.time() - start_time
+            self.logger.info("Question processed in %.2fs", duration)
+            self.logger.debug("Answer length: %d chars", len(result.answer))
+            self.logger.debug("Retrieved %d context chunks", len(result.context))
+            self.logger.debug("Referenced entities: %s", result.entities)
+            
+            # Log cost metrics
+            cost = result.get_cost()
+            self.logger.info("Processing cost: $%.4f", cost)
             
             return result.answer, result.context, None, result.entities
             
         except Exception as e:
-            self.logger.error(f"Error processing question: {e}")
-            self.logger.debug(f"Question: {question}\nBook: {book_number}\nChapter: {chapter_number}\nSeries: {series_id}")
-            self.logger.debug(f"State: {state}")
-            raise e
+            self.logger.error("Failed to process question: %s", str(e), 
+                            exc_info=True)
+            self.logger.error("Failed state: %s", state)
+            duration = time.time() - start_time
+            self.logger.warning("Failed request duration: %.2fs", duration)
+            raise

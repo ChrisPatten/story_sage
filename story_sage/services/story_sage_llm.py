@@ -49,6 +49,9 @@ _UsageType: TypeAlias = Tuple[int, int]
     prompt_tokens: Number of tokens in the prompt
 """
 
+class EvaluationResult(BaseModel):
+    evaluation: str
+
 class StorySageLLM:
     """A class to handle LLM operations for document Q&A using OpenAI's API.
     
@@ -82,6 +85,9 @@ class StorySageLLM:
             console_handler.setFormatter(formatter)
             
             self.logger.addHandler(console_handler)
+        
+        self.logger.info("Initializing StorySageLLM with model %s", config.completion_model)
+        self.logger.debug("API configuration complete")
 
     def generate_response(self, context: List[StorySageContext], question: str, 
                           conversation: StorySageConversation = None,
@@ -111,6 +117,9 @@ class StorySageLLM:
             has_answer: bool
             follow_up: str
         
+        self.logger.info("Generating response for question: '%s'", question[:100])
+        self.logger.debug("Using %d context chunks", len(context))
+        
         context = '"""\n' + '"""\n'.join([con.format_for_llm() for con in context]) + '"""'
         prompt_formatter = {'context': context, 'question': question}
         messages = self._set_up_prompt('generate_prompt', prompt_formatter, conversation)
@@ -125,11 +134,13 @@ class StorySageLLM:
             )
             result: CompletionResult = response.choices[0].message.parsed
             tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
-            #self.logger.debug(result)
+            self.logger.debug("API response received: tokens used (completion=%d, prompt=%d)", 
+                              response.usage.completion_tokens, response.usage.prompt_tokens)
             return (result.response, result.has_answer, result.follow_up, tokens)
         except Exception as e:
-            raise Exception(f"Error getting completion from OpenAI: {str(e)}")
-        
+            self.logger.error("Failed to generate response: %s", str(e), exc_info=True)
+            raise
+
     def evaluate_chunks(self, context: Dict[str, str], question: str, 
                         conversation: StorySageConversation = None, 
                         model: str = None, **kwargs) -> Tuple[str, _UsageType]:
@@ -151,9 +162,12 @@ class StorySageLLM:
             Exception: If OpenAI API call fails
         """
         
-        class EvaluationResult(BaseModel):
-            evaluation: dict[str, int]
-
+        self.logger.info("Evaluating %d chunks for relevance", len(context))
+        self.logger.debug("Question: '%s'", question[:100])
+        
+        if not context:
+            self.logger.error("Empty context provided for evaluation")
+            raise ValueError("Context dictionary cannot be empty")
         summaries = '\n'.join([f"- {id}: {doc}" for id, doc in context.items()])
         prompt_formatter = {'chunks': summaries, 'question': question}
         messages = self._set_up_prompt('evaluate_chunks_relevance', prompt_formatter, conversation)
@@ -166,9 +180,11 @@ class StorySageLLM:
             )
             result: EvaluationResult = response.choices[0].message.parsed
             tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
+            self.logger.debug("Chunk evaluation complete, tokens used: %d", response.usage.total_tokens)
             return result, tokens
         except Exception as e:
-            raise Exception(f"Error getting completion from OpenAI: {str(e)}")
+            self.logger.error("Failed to evaluate chunks: %s", str(e), exc_info=True)
+            raise
 
     def identify_relevant_chunks(self, context: Dict[str, str], question: str, 
                                  conversation: StorySageConversation = None, 
@@ -196,6 +212,9 @@ class StorySageLLM:
             chunk_ids: List[str]
             secondary_query: str
 
+        self.logger.info("Identifying relevant chunks for question: '%s'", question[:100])
+        self.logger.debug("Context size: %d chunks", len(context))
+        
         summaries = '\n'.join([f"- {id}: {doc}" for id, doc in context.items()])
         prompt_formatter = {'summaries': summaries, 'question': question}
         messages = self._set_up_prompt('relevant_chunks_prompt', prompt_formatter, conversation)
@@ -208,10 +227,13 @@ class StorySageLLM:
             )
             result: RelevantChunks = response.choices[0].message.parsed
             tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
+            self.logger.info("Found %d relevant chunks", len(result.chunk_ids))
+            self.logger.debug("Secondary query: '%s'", result.secondary_query)
             return (result.chunk_ids, result.secondary_query, tokens)
         except Exception as e:
-            raise Exception(f"Error getting completion from OpenAI: {str(e)}")
-        
+            self.logger.error("Failed to identify relevant chunks: %s", str(e), exc_info=True)
+            raise
+
     def get_keywords_from_question(self, question: str, conversation: StorySageConversation = None,
                                    model: str = None, **kwargs) -> Tuple[List[str], _UsageType]:
         """Extracts relevant keywords from a question for search purposes.
@@ -235,6 +257,8 @@ class StorySageLLM:
         class KeywordsResult(BaseModel):
             keywords: List[str]
 
+        self.logger.info("Extracting keywords from question: '%s'", question[:100])
+        
         messages = self._set_up_prompt('generate_keywords_prompt', {'question': question}, conversation)
 
         try:
@@ -245,12 +269,14 @@ class StorySageLLM:
             )
             result: KeywordsResult = response.choices[0].message.parsed
             tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
+            self.logger.debug("Extracted keywords: %s", result.keywords)
             return result.keywords, tokens
         except Exception as e:
-            raise Exception(f"Error getting completion from OpenAI: {str(e)}")
+            self.logger.error("Failed to extract keywords: %s", str(e), exc_info=True)
+            raise
 
     def generate_query(self, question: str, conversation: StorySageConversation = None,
-                      model: str = None, **kwargs) -> Tuple[str, _UsageType]:
+                      model: str = None, **kwargs) -> Tuple[str, bool, _UsageType]:
         """Generates a query for vector store search based on the question.
 
         Args:
@@ -270,7 +296,10 @@ class StorySageLLM:
         
         class QueryResult(BaseModel):
             query: str
+            needs_overview: bool
 
+        self.logger.info("Generating search query for question: '%s'", question[:100])
+        
         messages = self._set_up_prompt('generate_initial_query_prompt', {'question': question}, conversation)
 
         try:
@@ -281,9 +310,12 @@ class StorySageLLM:
             )
             result: QueryResult = response.choices[0].message.parsed
             tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
-            return result.query, tokens
+            self.logger.debug("Generated query: '%s', needs overview: %s", 
+                              result.query, result.needs_overview)
+            return result.query, result.needs_overview, tokens
         except Exception as e:
-            raise Exception(f"Error getting completion from OpenAI: {str(e)}")
+            self.logger.error("Failed to generate query: %s", str(e), exc_info=True)
+            raise
         
     def generate_followup_query(self, question: str, conversation: StorySageConversation,
                               model: str = None, **kwargs) -> Tuple[str, _UsageType]:
@@ -307,10 +339,11 @@ class StorySageLLM:
         class QueryResult(BaseModel):
             query: str
     
-        messages = self._set_up_prompt('generate_followup_query_prompt', {
-            'conversation': conversation,
-            'question': question
-        })
+        self.logger.info("Generating followup query for question: '%s'", question[:100])
+        
+        messages = self._set_up_prompt('generate_followup_query_prompt', 
+                                       {'question': question},
+                                       conversation=conversation)
     
         try:
             response = self.client.beta.chat.completions.parse(
@@ -322,7 +355,8 @@ class StorySageLLM:
             tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
             return result.query, tokens
         except Exception as e:
-            raise Exception(f"Error getting completion from OpenAI: {str(e)}")
+            self.logger.error("Failed to generate followup query: %s", str(e), exc_info=True)
+            raise
 
     def refine_followup_question(self, question: str, conversation: StorySageConversation,
                                  model: str = None, **kwargs) -> Tuple[str, _UsageType]:
@@ -346,10 +380,11 @@ class StorySageLLM:
         class RefinedQuestionResult(BaseModel):
             refined_question: str
 
-        messages = self._set_up_prompt('refine_followup_question', {
-            'history': conversation,
-            'question': question
-        })
+        self.logger.info("Refining followup question: '%s'", question[:100])
+        
+        messages = self._set_up_prompt('refine_followup_question', 
+                                       {'question': question},
+                                       conversation=conversation)
 
         try:
             response = self.client.beta.chat.completions.parse(
@@ -361,7 +396,8 @@ class StorySageLLM:
             tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
             return result.refined_question, tokens
         except Exception as e:
-            raise Exception(f"Error getting completion from OpenAI: {str(e)}")
+            self.logger.error("Failed to refine followup question: %s", str(e), exc_info=True)
+            raise
 
     
     def _get_conversation_turns(self, conversation: StorySageConversation) -> List[Dict[str, str]]:
@@ -401,7 +437,10 @@ class StorySageLLM:
             KeyError: If prompt_key is not found in configured prompts
         """
         
+        self.logger.debug("Setting up prompt with key: %s", prompt_key)
+        
         if prompt_key not in self.prompts:
+            self.logger.error("Invalid prompt key: %s", prompt_key)
             raise KeyError(f"Prompt key '{prompt_key}' not found in prompts")
         prompt_template = self.prompts[prompt_key]
         messages = []
@@ -417,5 +456,6 @@ class StorySageLLM:
         for prompt in prompt_template[1:]:
             messages.append({'role': prompt['role'], 'content': prompt['prompt'].format_map(prompt_formatter)})
 
+        self.logger.debug("Prompt setup complete with %d messages", len(messages))
         return messages
 

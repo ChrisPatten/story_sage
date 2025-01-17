@@ -189,7 +189,8 @@ class StorySageRetriever:
             include=['metadatas', 'documents'],  # Include metadata and documents in the results
             where=combined_filter  # Apply the combined filter
         )
-
+        if len(query_result['ids'][0]) < 1:
+            self.logger.warning(f'No results found with query {query_str} and filters {combined_filter}')
         # Log the retrieved documents for debugging purposes
         self.logger.debug(f"Retrieved documents: {query_result['ids']}")
         # Return the query results
@@ -297,7 +298,7 @@ class StorySageRetriever:
             where_filter = _safe_add_and(where_filter, {'is_summary': True})
 
         if context_filters.get('top_level_only', False):
-            where_filter = _safe_add_and(where_filter, {'is_top_level': True})
+            where_filter = _safe_add_and(where_filter, {'parents': ''})
 
         if context_filters.get('exclude_summaries', False):
             where_filter = _safe_add_and(where_filter, {'is_summary': False})
