@@ -204,9 +204,14 @@ class StorySageChain:
         self.state.context_filters = {
             'entities': self.state.entities,
             'series_id': self.state.series_id,
-            'book_number': self.state.book_number,
-            'chapter_number': self.state.chapter_number
+            'book_number': self.state.book_number
         }
+
+        # Add either chapter_number or book_position, not both
+        if hasattr(self.state, 'book_position') and self.state.book_position is not None:
+            self.state.context_filters['book_position'] = self.state.book_position
+        elif hasattr(self.state, 'chapter_number') and self.state.chapter_number is not None:
+            self.state.context_filters['chapter_number'] = self.state.chapter_number
         
         # Check for temporal aspects in the question
         try:
@@ -217,23 +222,33 @@ class StorySageChain:
             self._add_usage(tokens)
             
             if temporal_result.is_temporal:
+                # Add query_type to context filters
+                self.state.context_filters['query_type'] = temporal_result.query_type
+                
                 if temporal_result.query_type == 'first':
-                    # For "first" queries, sort results chronologically
                     self.state.sort_order = 'chronological'
                 elif temporal_result.query_type == 'current':
-                    # For "current" queries, sort in reverse to get most recent first
                     self.state.sort_order = 'reverse_chronological'
                 elif temporal_result.query_type == 'specific_point':
-                    # For specific points, override book/chapter filters if provided
+                    # Override sort order and filters for specific points
+                    self.state.sort_order = None
                     if temporal_result.book_number is not None:
                         self.state.context_filters['book_number'] = temporal_result.book_number
-                    if temporal_result.chapter_number is not None:
+                    if temporal_result.book_position is not None:
+                        self.state.context_filters['book_position'] = temporal_result.book_position
+                        # Remove chapter_number if book_position is specified
+                        self.state.context_filters.pop('chapter_number', None)
+                    elif temporal_result.chapter_number is not None:
                         self.state.context_filters['chapter_number'] = temporal_result.chapter_number
+                        # Remove book_position if chapter_number is specified
+                        self.state.context_filters.pop('book_position', None)
             else:
                 self.state.sort_order = None
+                self.state.context_filters['query_type'] = 'default'
         except Exception as e:
             self.logger.error(f"Error detecting temporal query: {e}")
             self.state.sort_order = None
+            self.state.context_filters['query_type'] = 'default'
 
     def _get_initial_context(self) -> bool:
         """Retrieve context from the summary collection."""

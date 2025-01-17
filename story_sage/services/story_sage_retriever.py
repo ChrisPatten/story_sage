@@ -244,32 +244,7 @@ class StorySageRetriever:
         
     
     def get_where_filter(self, context_filters: dict) -> dict:
-        """Constructs a filter dictionary for ChromaDB queries.
-
-        Creates a complex filter that ensures retrieved chunks are from either:
-        1. Earlier books in the series
-        2. Earlier chapters in the same book
-        3. Match the specified entity filters (if include_entities is True)
-
-        Args:
-            context_filters (dict): Dictionary containing filtering criteria
-            include_entities (bool): Whether to include entity filters in the result
-
-        Returns:
-            dict: A nested dictionary structure compatible with ChromaDB's where clause
-
-        Example:
-            >>> filters = {
-            ...     'series_id': 1,
-            ...     'book_number': 2,
-            ...     'chapter_number': 3,
-            ...     'entities': ['character_123']
-            ... }
-            >>> filter_dict = retriever.get_where_filter(filters)
-            >>> print(filter_dict)
-            # Outputs a complex nested dictionary for ChromaDB filtering
-        """
-
+        """Constructs a filter dictionary for ChromaDB queries."""
         def _safe_add_and(filter: dict, new_item: dict) -> dict:
             if '$and' in filter.keys():
                 filter['$and'].append(new_item)
@@ -277,26 +252,59 @@ class StorySageRetriever:
             else:
                 return {'$and': [filter, new_item]}
 
-        # Extract book and chapter numbers, if present
+        # Extract book number and position/chapter
         book_number = context_filters.get('book_number')
+        book_position = context_filters.get('book_position')
         chapter_number = context_filters.get('chapter_number')
 
-        # Build a filter to retrieve documents from earlier books or chapters
-        where_filter = {
-            '$or': [
-                {'book_number': {'$lt': book_number}},  # Books before the current one
-                {'$and': [  # Chapters before the current one in the same book
-                    {'book_number': book_number},
-                    {'chapter_number': {'$lt': chapter_number}}
-                ]}
-            ]
-        }
+        # Check if this is a specific point query
+        is_specific_point = context_filters.get('query_type') == 'specific_point'
 
-        # Add additional filters as necessary
+        # Build filter based on either book_position or chapter_number
+        if is_specific_point:
+            # For specific points, we want exact matches up to the specified point
+            if book_position is not None:
+                where_filter = {
+                    '$and': [
+                        {'book_number': book_number},
+                        {'book_position': {'$lt': book_position}}
+                    ]
+                }
+            else:
+                where_filter = {
+                    '$and': [
+                        {'book_number': book_number},
+                        {'chapter_number': {'$lt': chapter_number}}
+                    ]
+                }
+        else:
+            # Original logic for non-specific point queries
+            if book_position is not None:
+                where_filter = {
+                    '$or': [
+                        {'book_number': {'$lt': book_number}},
+                        {'$and': [
+                            {'book_number': book_number},
+                            {'book_position': {'$lt': book_position}}
+                        ]}
+                    ]
+                }
+            else:
+                where_filter = {
+                    '$or': [
+                        {'book_number': {'$lt': book_number}},
+                        {'$and': [
+                            {'book_number': book_number},
+                            {'chapter_number': {'$lt': chapter_number}}
+                        ]}
+                    ]
+                }
+
+        # Add additional filters
         if 'series_id' in context_filters:
             where_filter = _safe_add_and(where_filter, {'series_id': int(context_filters.get('series_id'))})
 
-        # The following filters act as flags (default to False unless set otherwise)
+        # Handle flags
         if context_filters.get('summaries_only', False):
             where_filter = _safe_add_and(where_filter, {'is_summary': True})
 
@@ -306,20 +314,22 @@ class StorySageRetriever:
         if context_filters.get('exclude_summaries', False):
             where_filter = _safe_add_and(where_filter, {'is_summary': False})
         
-        # Build filters based on entities like people, places, groups, and animals
-        entity_filters = []
+        # Handle entity filters
         if len(context_filters.get('entities', [])) > 0:
             for entity_id in context_filters['entities']:
                 where_filter = _safe_add_and(where_filter, {'entities': entity_id})
 
         # Handle temporal constraints
         max_book = context_filters.get('max_book')
+        max_position = context_filters.get('max_position')
         max_chapter = context_filters.get('max_chapter')
         
         if max_book is not None:
             where_filter = _safe_add_and(where_filter, {'book_number': {'$lte': max_book}})
             
-        if max_chapter is not None and book_number == max_book:
+        if max_position is not None and book_number == max_book:
+            where_filter = _safe_add_and(where_filter, {'book_position': {'$lte': max_position}})
+        elif max_chapter is not None and book_number == max_book:
             where_filter = _safe_add_and(where_filter, {'chapter_number': {'$lte': max_chapter}})
 
         return where_filter

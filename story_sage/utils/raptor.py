@@ -105,12 +105,14 @@ class ChunkMetadata:
                  book_number: int = None, 
                  chapter_number: int = None, 
                  level: int = None,
-                 series_id: int = None):
+                 series_id: int = None,
+                 book_position: float = None):
         self.series_id = series_id
         self.book_number = book_number
         self.chapter_number = chapter_number
         self.level = level
         self.chunk_index = chunk_index
+        self.book_position = book_position
 
     def __to_dict__(self) -> dict:
         return {
@@ -118,7 +120,8 @@ class ChunkMetadata:
             "book_number": self.book_number,
             "chapter_number": self.chapter_number,
             "level": self.level,
-            "chunk_index": self.chunk_index
+            "chunk_index": self.chunk_index,
+            "book_position": self.book_position
         }
 
     def to_json(self) -> dict:
@@ -128,7 +131,8 @@ class ChunkMetadata:
             "book_number": self.book_number,
             "chapter_number": self.chapter_number,
             "level": self.level,
-            "chunk_index": self.chunk_index
+            "chunk_index": self.chunk_index,
+            "book_position": self.book_position
         }
 
 class Chunk:
@@ -578,12 +582,20 @@ class RaptorProcessor:
         """
         chunk_list, chunk_keys, cluster_idx, level = cluster_data
     
-        # Set the metadata
+        # Set the metadata - use average position of constituent chunks for summaries
+        book_positions = [chunk.metadata.book_position 
+                         for chunk in chunk_list 
+                         if chunk.chunk_key in chunk_keys 
+                         and chunk.metadata.book_position is not None]
+        avg_position = sum(book_positions) / len(book_positions) if book_positions else None
+        
         cluster_metadata = {
+            "series_id": chunk_list[0].metadata.series_id if hasattr(chunk_list[0].metadata, 'series_id') else None,
             "book_number": chunk_list[0].metadata.book_number,
             "chapter_number": chunk_list[0].metadata.chapter_number,
             "level": level + 1,
-            "chunk_index": cluster_idx
+            "chunk_index": cluster_idx,
+            "book_position": round(avg_position, 4) if avg_position is not None else None
         }
         
         # Collect and summarize texts
@@ -797,22 +809,36 @@ class RaptorProcessor:
             raise ValueError(f"No text found in file path {file_path}")
         for book_filename, book_info in sorted(input_text.items()):
             chunked_text[book_filename] = []
+            
+            # Calculate total book length for position tracking
+            total_book_length = sum(len(chapter.full_text) for chapter in book_info.chapters.values())
+            current_position = 0
+            
             for chapter_num, chapter_data in book_info.chapters.items():
                 chunks = self.chunker.sentence_splitter(
                     chapter_data.full_text, 
                     chunk_size=self.chunk_size, 
                     chunk_overlap=self.chunk_overlap
                 )
+                
                 chunk_list = []
                 for idx, text in enumerate(chunks):
+                    # Update position counter with chunk length
+                    current_position += len(text)
+                    if idx < len(chunks) - 1:  # For all chunks except the last one in this chapter
+                        # Subtract overlap to avoid double counting
+                        current_position -= self.chunk_overlap
+                    
                     chunk_metadata = {
                         "series_id": series_id,
                         "book_number": book_info.book_number,
                         "chapter_number": chapter_num,
                         "level": 1,
-                        "chunk_index": idx
+                        "chunk_index": idx,
+                        "book_position": round(current_position / total_book_length, 4)
                     }
                     chunk_list.append(Chunk(text, metadata=chunk_metadata))
+                    
                 chunked_text[book_filename].append(chunk_list)
         return chunked_text
 

@@ -74,6 +74,7 @@ class TemporalQueryResult(BaseModel):
     query_type: str  # 'current', 'first', 'specific_point'
     book_number: Optional[int]
     chapter_number: Optional[int]
+    book_position: Optional[int] 
     relative_position: Optional[str]  # 'before', 'after', 'at'
 
 class StorySageLLM:
