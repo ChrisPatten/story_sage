@@ -104,7 +104,9 @@ class ChunkMetadata:
                  chunk_index: int, 
                  book_number: int = None, 
                  chapter_number: int = None, 
-                 level: int = None):
+                 level: int = None,
+                 series_id: int = None):
+        self.series_id = series_id
         self.book_number = book_number
         self.chapter_number = chapter_number
         self.level = level
@@ -112,6 +114,7 @@ class ChunkMetadata:
 
     def __to_dict__(self) -> dict:
         return {
+            "series_id": self.series_id,
             "book_number": self.book_number,
             "chapter_number": self.chapter_number,
             "level": self.level,
@@ -121,6 +124,7 @@ class ChunkMetadata:
     def to_json(self) -> dict:
         """Convert metadata to JSON-serializable dictionary."""
         return {
+            "series_id": self.series_id,
             "book_number": self.book_number,
             "chapter_number": self.chapter_number,
             "level": self.level,
@@ -165,6 +169,8 @@ class Chunk:
     def _create_chunk_key(self) -> str:
         """Generates a unique chunk key from the metadata in a consistent format."""
         parts = []
+        if hasattr(self.metadata, 'series_id'):
+            parts.append(f"series_{self.metadata.series_id}")
         if self.metadata.book_number is not None:
             parts.append(f"book_{self.metadata.book_number}")
         if self.metadata.chapter_number is not None:
@@ -316,7 +322,8 @@ class RaptorProcessor:
                  n_init: int = 2,
                  max_summary_threads: int = 1,
                  max_processes: int = None,
-                 max_levels: int = 3):
+                 max_levels: int = 3,
+                 series_id: int = None):
         os.environ['TOKENIZERS_PARALLELISM'] = "false"
         self.seed = seed
         self.config_path = config_path
@@ -339,6 +346,7 @@ class RaptorProcessor:
         self.skip_summarization = skip_summarization
         self.max_summary_threads = max_summary_threads
         self.max_levels = max_levels
+        self.series_id = series_id
         
         self.max_processes = max_processes or cpu_count()
         
@@ -752,7 +760,7 @@ class RaptorProcessor:
                 print(f"Finished processing {chapter_key} for book {book_tree['shared_tree_key']}")
             return chunks
 
-    def _get_chunks_from_filepath(self, file_path: Union[str, List[str]]) -> OrderedDict[str, list[list[Chunk]]]:
+    def _get_chunks_from_filepath(self, file_path: Union[str, List[str]], series_id: int = None) -> OrderedDict[str, list[list[Chunk]]]:
         """Loads and chunks text files into a hierarchical structure.
 
         Processes one or more text files matching the given path pattern,
@@ -761,6 +769,7 @@ class RaptorProcessor:
         Args:
             file_path (str): Glob pattern matching text files to process
                 (e.g., './books/*.txt')
+            series_id (int, optional): ID of the series being processed. Defaults to self.series_id.
 
         Returns:
             OrderedDict[str, list[list[Chunk]]] : Hierarchical structure where:
@@ -781,6 +790,7 @@ class RaptorProcessor:
             >>> print(f"First book has {len(first_book)} chapters")
             First book has 12 chapters
         """
+        series_id = series_id or self.series_id
         chunked_text: OrderedDict[str, list[list[Chunk]]] = {}
         input_text = self.chunker.read_text_files(file_path)
         if len(input_text) < 1:
@@ -795,13 +805,22 @@ class RaptorProcessor:
                 )
                 chunk_list = []
                 for idx, text in enumerate(chunks):
-                    chunk_metadata = {"book_number": book_info.book_number, "chapter_number": chapter_num, "level": 1, "chunk_index": idx}
+                    chunk_metadata = {
+                        "series_id": series_id,
+                        "book_number": book_info.book_number,
+                        "chapter_number": chapter_num,
+                        "level": 1,
+                        "chunk_index": idx
+                    }
                     chunk_list.append(Chunk(text, metadata=chunk_metadata))
                 chunked_text[book_filename].append(chunk_list)
         return chunked_text
 
-    def process_texts(self, file_path: Union[str, List[str]], max_levels: int = None, 
-                      max_processes: int = None, max_summary_threads: int = None
+    def process_texts(self, file_path: Union[str, List[str]], 
+                      series_id: int = None,
+                      max_levels: int = None, 
+                      max_processes: int = None, 
+                      max_summary_threads: int = None
                      ) -> _RaptorResults:
         """Process text files into a multi-level hierarchical summary structure.
 
@@ -813,6 +832,7 @@ class RaptorProcessor:
 
         Args:
             file_path (str): Glob pattern matching text files to process
+            series_id (int, optional): ID of the series being processed. Defaults to self.series_id.
             max_levels (int, optional): Override default max hierarchy levels
             max_processes (int, optional): Override default process pool size
             max_summary_threads (int, optional): Override default summary thread count
@@ -846,6 +866,7 @@ class RaptorProcessor:
             Processed 2 books
         """
         
+        series_id = series_id or self.series_id
         self.chunk_tree: _RaptorResults = {}
 
         # Overwrite default values if provided in this method call
@@ -857,7 +878,7 @@ class RaptorProcessor:
             self.max_summary_threads = max_summary_threads
 
         with Manager() as manager:
-            chunked_text = self._get_chunks_from_filepath(file_path)
+            chunked_text = self._get_chunks_from_filepath(file_path, series_id)
             if len(chunked_text) < 1:
                 raise ValueError("No text found in the provided file path.")
             
