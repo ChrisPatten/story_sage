@@ -74,81 +74,125 @@ class StorySageChain:
         self.state = state
         self.needs_clarification = False
         self.secondary_query = None
+        self._chunk_cache = {}  # Add LRU cache for frequently accessed chunks
+        self._cache_size = 1000  # Maximum number of cached chunks
 
     def invoke(self) -> StorySageState:
-        """Execute the chain to generate a response to the question in the current state.
-        
-        Returns:
-            StorySageState: Updated state containing the answer and context
-        """
+        """Execute the chain to generate a response to the question in the current state."""
         self.logger.info(f"Invoking StorySageChain with question: '{self.state.question}'")
         self.state.node_history = []
 
-        # Get the initial context filters
-        self._get_context_filters()
-        self.logger.debug(f'Context filters: {self.state.context_filters}')
+        try:
+            # Early exit for simple questions that don't need context
+            if self._is_simple_question(self.state.question):
+                self.logger.info('Question is simple and does not require context')
+                if self._generate_simple_response():
+                    return self.state
 
-        if self._is_followup_question():
-            self.logger.info('Question is a followup')
-            if self._expand_followup_question():
-                if self._retrieve_from_followup_query():
-                    if self._generate():
-                        return self.state
-        else:
-            self.logger.info('Question is not a followup')
+            # Get context filters and handle followup questions
+            self._get_context_filters()
+            if self._is_followup_question():
+                if self._handle_followup_question():
+                    return self.state
 
-        # Generate an optimized query for vector search
+            # Main question processing pipeline
+            if not self._process_main_question():
+                self.state.answer = "I'm sorry, I couldn't find an answer to that question."
+
+            return self.state
+
+        except Exception as e:
+            self.logger.error(f"Error in chain execution: {e}", exc_info=True)
+            self.state.answer = "I encountered an error while processing your question."
+            return self.state
+
+    def _process_main_question(self) -> bool:
+        """Process the main question through the retrieval and generation pipeline."""
+        # Generate optimized search query
         if not self._generate_search_query():
             self.state.search_query = self.state.question
-        self.logger.debug(f'Search query: {self.state.search_query}')
 
-        # Get the initial context based on the generated search query
-        self._get_initial_context()
+        # Get initial context and evaluate chunks in batches
+        if not self._get_initial_context():
+            return self._fallback_to_keyword_search()
+
+        relevant_chunks = self._process_chunks_in_batches(self.state.summary_chunks)
+        if not relevant_chunks:
+            return self._fallback_to_keyword_search()
+
+        # Retrieve and generate from relevant chunks
+        self.state.target_ids = relevant_chunks
+        if self._retrieve_by_ids() and self._generate():
+            return True
+
+        return self._fallback_to_keyword_search()
+
+    def _process_chunks_in_batches(self, chunks: Dict[str, str], batch_size: int = 10) -> List[str]:
+        """Process chunks in batches for more efficient evaluation."""
+        relevant_chunks = []
+        chunk_items = list(chunks.items())
         
-        relevant_chunks, secondary_query = self._evaluate_chunks(context_chunks=self.state.summary_chunks)
-        self.logger.debug(f'Relevant chunks: {relevant_chunks}')
-        if len(relevant_chunks) > 1:
-            self.state.target_ids = relevant_chunks
-            self.logger.debug(f'Target IDs: {self.state.target_ids}')
-            self._retrieve_by_ids()
-        elif secondary_query:
-            self.logger.debug(f'No relevant chunks found. Trying secondary query: {secondary_query}')
-            self.state.search_query = secondary_query
-            self._get_initial_context()
-        else:
-            self.logger.debug('No relevant chunks found and no secondary query. Performing full chunk search')
-            if self._retrieve_from_query(exclude_summaries=False):
-                self.logger.debug('Got context from full chunk search')
-                full_text_chunks, _ = self._evaluate_chunks(context_chunks=self.state.context)
-                if len(full_text_chunks) > 1:
-                    self.state.context = [context for context in self.state.context if context.chunk_id in full_text_chunks]
-                else:
-                    self.logger.debug('No relevant chunks found from full text search. Performing keyword search')
-                    self.state.context = []
+        for i in range(0, len(chunk_items), batch_size):
+            batch = dict(chunk_items[i:i + batch_size])
+            batch_results, _ = self._evaluate_chunks(batch)
+            relevant_chunks.extend(batch_results)
+            
+            # Early exit if we have enough highly relevant chunks
+            if len(relevant_chunks) >= self.config.n_chunks:
+                break
 
-        self.state.summary_chunks = None
+        return relevant_chunks
 
-        if len(self.state.context) > 0:
-            self.logger.debug('Context retrieved. Generating response')
-            if self._generate():
-                if self.needs_clarification:
-                    self.logger.info('Generated clarifying question')
-                    return self.state
-                return self.state
+    def _handle_followup_question(self) -> bool:
+        """Handle followup questions with context from previous interactions."""
+        if self._expand_followup_question():
+            # Check cache first
+            cache_key = f"{self.state.series_id}_{self.state.question}"
+            if cache_key in self._chunk_cache:
+                self.state.context = self._chunk_cache[cache_key]
+                return self._generate()
 
-        self.logger.warning('Generating response from semantic search failed. Trying keyword search.')
-        if self._try_keyword_retrieval():
-            self.logger.debug('Context retrieved from keyword search. Generating response')
-            if self._generate():
-                return self.state
-            else:
-                self.logger.warning('Failed to generate response from keyword search')
+            if self._retrieve_from_followup_query():
+                # Cache the results
+                self._cache_chunks(cache_key, self.state.context)
+                return self._generate()
+        return False
 
-        if not self.state.answer:
-            self.state.answer = "I'm sorry, I couldn't find an answer to that question."
-        
-        self.logger.info(f'Final answer: {self.state.answer}')
-        return self.state or StorySageState(answer="I'm sorry, I couldn't find an answer to that question.")
+    def _cache_chunks(self, key: str, chunks: List[StorySageContext]) -> None:
+        """Cache chunks with LRU eviction."""
+        if len(self._chunk_cache) >= self._cache_size:
+            # Remove oldest item
+            self._chunk_cache.pop(next(iter(self._chunk_cache)))
+        self._chunk_cache[key] = chunks
+
+    def _is_simple_question(self, question: str) -> bool:
+        """Determine if a question can be answered without context."""
+        simple_patterns = [
+            r"^what (is|are|was|were) the",
+            r"^(can|could) you explain",
+            r"^tell me (about|what)",
+        ]
+        return any(re.match(pattern, question.lower()) for pattern in simple_patterns)
+
+    def _generate_simple_response(self) -> bool:
+        """Generate a response for simple questions without context."""
+        try:
+            response = self.llm.generate_response(
+                context=[],
+                question=self.state.question,
+                conversation=self.state.conversation
+            )
+            if response[0].has_answer:
+                self.state.answer = response[0].response
+                return True
+        except Exception as e:
+            self.logger.error(f"Error generating simple response: {e}")
+        return False
+
+    def _fallback_to_keyword_search(self) -> bool:
+        """Fallback strategy using keyword search."""
+        self.logger.warning('Falling back to keyword search')
+        return self._try_keyword_retrieval() and self._generate()
 
     # Internal methods for steps in the chain
     def _get_context_filters(self) -> None:
@@ -215,7 +259,6 @@ class StorySageChain:
             if not results:
                 self.logger.debug('No context found in hierarchy')
                 return False
-            self.logger.debug(f'Context retrieved by IDs: {results}')
         except Exception as e:
             self.logger.error(f'Error retrieving context by IDs: {e}')
             return False
