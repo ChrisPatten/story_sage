@@ -6,11 +6,12 @@ from typing import List, Optional, Dict, Any, Tuple
 from chromadb import QueryResult
 from ..models import StorySageConfig, StorySageState, StorySageContext
 from . import StorySageLLM, StorySageRetriever
-from .story_sage_llm import _UsageType
+from .story_sage_llm import _UsageType, ResponseData, ChunkEvaluationResult, KeywordsResult, QueryResult, RefinedQuestionResult
 from ..utils import flatten_nested_list
 
 # Constants
 VALID_CHUNK_ID_PATTERN = re.compile(r'series_\d+\|book_\d+\|chapter_\d+\|level_\d+\|chunk_\d+')
+RELEVANCE_SCORE_THRESHOLD = 6
 
 """
 StorySageChain orchestrates the question-answering process for literary text analysis.
@@ -182,8 +183,9 @@ class StorySageChain:
             self.state.summary_chunks = []
             return False
         
-    def _evaluate_chunks(self, context_chunks: Dict[str, str]) -> Tuple[List[str], Optional[str], _UsageType]:
+    def _evaluate_chunks(self, context_chunks: Dict[str, str]) -> Tuple[List[str], Optional[str]]:
         """Combined chunk evaluation and selection."""
+        result: ChunkEvaluationResult
         result, usage = self.llm.evaluate_chunks(
             context=context_chunks,
             question=self.state.question,
@@ -192,13 +194,13 @@ class StorySageChain:
         
         # Filter chunks meeting threshold
         relevant_chunks = []
-        for chunk_score in result.get('chunk_scores', []):
+        for chunk_score in result.chunk_scores:
             chunk_id = chunk_score['chunk_id']
             score = chunk_score['score']
-            if score >= 6 and re.match(VALID_CHUNK_ID_PATTERN, chunk_id):
+            if score >= RELEVANCE_SCORE_THRESHOLD and re.match(VALID_CHUNK_ID_PATTERN, chunk_id):
                 relevant_chunks.append(chunk_id)
         self._add_usage(usage)
-        return relevant_chunks, result.get('secondary_query', None)
+        return relevant_chunks, result.secondary_query
 
     def _retrieve_by_ids(self) -> bool:
         """Retrieve context using specific chunk IDs.
@@ -296,22 +298,23 @@ class StorySageChain:
         self.logger.debug('Generating response')
         self.state.node_history.append('Generate')
         try:
-            response, has_answer, follow_up, tokens = self.llm.generate_response(
+            response_data: ResponseData
+            response_data, tokens = self.llm.generate_response(
                 context=self.state.context,
                 question=self.state.question,
                 conversation=self.state.conversation
             )
             self._add_usage(tokens)
-            self.logger.debug(f'Response generated: {response}')
-            if not has_answer and follow_up:
+            self.logger.debug(f'Response generated: {response_data.response}')
+            if not response_data.has_answer and response_data.follow_up:
                 self.needs_clarification = True
-                self.state.answer = response + '\n\n\n' + follow_up
+                self.state.answer = response_data.response + '\n\n\n' + response_data.follow_up
                 self.logger.info('Clarifying question generated')
                 return True
             
             self.needs_clarification = False
-            self.state.answer = (response + '\n\n\n' + follow_up) if follow_up else response
-            return has_answer
+            self.state.answer = (response_data.response + '\n\n\n' + response_data.follow_up) if response_data.follow_up else response_data.response
+            return response_data.has_answer
         except Exception as e:
             self.logger.error(f'Error generating response: {e}')
             return False
@@ -378,15 +381,16 @@ class StorySageChain:
         self.logger.debug('Getting context from followup query')
         self.state.node_history.append('GetContextFromFollowup')
         try:
-            query, tokens = self.llm.generate_followup_query(
+            query_result: QueryResult
+            query_result, tokens = self.llm.generate_followup_query(
                 question=self.state.question,
                 conversation=self.state.conversation
             )
             self._add_usage(tokens)
-            self.logger.debug(f'Generated followup query: {query}')
+            self.logger.debug(f'Generated followup query: {query_result.query}')
             
-            result: QueryResult = self.raptor_retriever.retrieve_chunks(
-                query_str=query,
+            result = self.raptor_retriever.retrieve_chunks(
+                query_str=query_result.query,
                 context_filters=self.state.context_filters
             )
             if not result:
@@ -408,13 +412,14 @@ class StorySageChain:
         self.logger.debug('Refining followup question')
         self.state.node_history.append('RefineFollowupQuestion')
         try:
-            refined_question, tokens = self.llm.refine_followup_question(
+            refined_question_result: RefinedQuestionResult
+            refined_question_result, tokens = self.llm.refine_followup_question(
                 question=self.state.question,
                 conversation=self.state.conversation
             )
             self._add_usage(tokens)
-            self.state.question = refined_question
-            self.logger.debug(f'Refined follow-up question: {refined_question}')
+            self.state.question = refined_question_result.refined_question
+            self.logger.debug(f'Refined follow-up question: {refined_question_result.refined_question}')
             return True
         except Exception as e:
             self.logger.error(f'Error refining follow-up question: {e}')
@@ -437,12 +442,13 @@ class StorySageChain:
         """
         self.logger.debug('Generating search query')
         try:
-            search_query, needs_overview, tokens = self.llm.generate_query(
+            query_result: QueryResult
+            query_result, tokens = self.llm.generate_query(
                 question=self.state.question,
                 conversation=self.state.conversation
             )
-            self.state.search_query = search_query
-            self.state.needs_overview = needs_overview
+            self.state.search_query = query_result.query
+            self.state.needs_overview = query_result.needs_overview
             self._add_usage(tokens)
             return True
         except Exception as e:
@@ -457,13 +463,14 @@ class StorySageChain:
         """
         self.logger.debug('Attempting keyword retrieval')
         try:
-            keywords, tokens = self.llm.get_keywords_from_question(
+            keywords_result: KeywordsResult
+            keywords_result, tokens = self.llm.get_keywords_from_question(
                 question=self.state.question,
                 conversation=self.state.conversation
             )
             self._add_usage(tokens)
-            self.logger.debug(f'Keywords for retrieval: {keywords}')
-            return self._get_context_from_keywords(keywords=keywords)
+            self.logger.debug(f'Keywords for retrieval: {keywords_result.keywords}')
+            return self._get_context_from_keywords(keywords=keywords_result.keywords)
         except Exception as e:
             self.logger.error(f'Error in keyword retrieval: {e}')
             return False
