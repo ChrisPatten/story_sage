@@ -215,54 +215,6 @@ class StorySageLLM:
             self.logger.error("Failed to evaluate chunks: %s", str(e), exc_info=True)
             raise
 
-    def identify_relevant_chunks(self, context: Dict[str, str], question: str, 
-                                 conversation: StorySageConversation = None, 
-                                 model: str = None, **kwargs) -> Tuple[List[str], str, _UsageType]:
-        """Identifies the most relevant document chunks for a given question.
-
-        Args:
-            context (Dict[str, str]): Dictionary mapping chunk IDs to their summaries
-            question (str): User's question to find relevant chunks for
-            conversation (StorySageConversation, optional): Previous conversation history. Defaults to None
-            model (str, optional): OpenAI model to use. Defaults to config's model
-            **kwargs: Additional arguments passed to OpenAI API
-
-        Returns:
-            Tuple[List[str], str, _UsageType]: Contains:
-                - chunk_ids: List of relevant chunk IDs
-                - secondary_query: Refined search query based on the question
-                - tokens: Number of tokens used in the turn
-
-        Raises:
-            Exception: If OpenAI API call fails
-        """
-        
-        class RelevantChunks(BaseModel):
-            chunk_ids: List[str]
-            secondary_query: str
-
-        self.logger.info("Identifying relevant chunks for question: '%s'", question[:100])
-        self.logger.debug("Context size: %d chunks", len(context))
-        
-        summaries = '\n'.join([f"- {id}: {doc}" for id, doc in context.items()])
-        prompt_formatter = {'summaries': summaries, 'question': question}
-        messages = self._set_up_prompt('relevant_chunks_prompt', prompt_formatter, conversation)
-        
-        try:
-            response = self.client.beta.chat.completions.parse(
-                model=model or self.config.completion_model,
-                messages=messages,
-                response_format=RelevantChunks
-            )
-            result: RelevantChunks = response.choices[0].message.parsed
-            tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
-            self.logger.info("Found %d relevant chunks", len(result.chunk_ids))
-            self.logger.debug("Secondary query: '%s'", result.secondary_query)
-            return (result.chunk_ids, result.secondary_query, tokens)
-        except Exception as e:
-            self.logger.error("Failed to identify relevant chunks: %s", str(e), exc_info=True)
-            raise
-
     def get_keywords_from_question(self, question: str, conversation: StorySageConversation = None,
                                    model: str = None, **kwargs) -> Tuple[List[str], _UsageType]:
         """Extracts relevant keywords from a question for search purposes.

@@ -286,49 +286,6 @@ class StorySageChain:
         
         self.state.context = self._get_context_from_result(results)
         return True
-    
-    def _get_relevant_chunk_ids(self, threshold: int = 6) -> bool:
-        """Retrieve relevant chunks based on the current context.
-        
-        Args:
-            threshold: Minimum relevance score threshold for chunks to be included
-            
-        Returns:
-            bool: True if relevant chunks were found and met threshold, False otherwise
-        """
-        self.logger.debug('Retrieving relevant chunks')
-        self.state.node_history.append('GetRelevantChunks')
-        if not self.state.summary_chunks:
-            self.logger.debug('No context available to evaluate chunks')
-            return False
-        try:
-            relevant_chunks, tokens = self.llm.evaluate_chunks(
-                question=self.state.question,
-                context=self.state.summary_chunks,
-                conversation=self.state.conversation
-            )
-            self._add_usage(tokens)
-            self.logger.debug(f'Relevant chunks evaluated: {relevant_chunks}')
-        except Exception as e:
-            self.logger.error(f'Error getting relevant chunks: {e}')
-            return False
-        
-        if not relevant_chunks:
-            self.logger.debug('No relevant chunks found')
-            return False
-        
-        try:
-            in_scope_chunks: List[str] = []
-            for chunk_key, score in relevant_chunks.items():
-                if score >= threshold and re.match(VALID_CHUNK_ID_PATTERN, chunk_key):
-                    in_scope_chunks.append(chunk_key)
-            self.logger.debug(f'In-scope chunks: {in_scope_chunks}')
-        except:
-            self.logger.error('Error filtering relevant chunks. Keys:', relevant_chunks)
-            return False
-    
-        self.state.target_ids = in_scope_chunks
-        return True
 
     def _generate(self) -> bool:
         """Generate response using LLM based on current context and question.
@@ -491,40 +448,6 @@ class StorySageChain:
         except Exception as e:
             self.logger.error(f'Error generating search query: {e}')
             return False
-
-    def _process_summary_chunks(self) -> bool:
-        """Process summary chunks and retrieve detailed context if relevant.
-        
-        Returns:
-            bool: True if processing was successful
-        """
-        self.logger.debug('Processing summary chunks')
-        if len(self.state.summary_chunks) > 0:
-            if not self._identify_relevant_chunks():
-                if self.secondary_query:
-                    return self._handle_secondary_query()
-                return False
-            return self._retrieve_by_ids() and self._generate()
-        return False
-
-    def _handle_secondary_query(self) -> bool:
-        """Handle secondary query to get more context.
-        
-        Returns:
-            bool: True if context was successfully retrieved using secondary query
-        """
-        self.logger.debug(f'Handling secondary query: {self.secondary_query}')
-        if self.state.answer:
-            response = self.state.answer + '\n\n' + self.secondary_query
-            self.state.conversation.add_turn(
-                question=self.state.question, 
-                detected_entities=self.state.entities, 
-                context=self.state.context, 
-                response=response
-            )
-            self.state.search_query = self.secondary_query
-            return self._retrieve_from_query(exclude_summaries=False)
-        return False
 
     def _try_keyword_retrieval(self) -> bool:
         """Attempt to retrieve context using keyword-based search.

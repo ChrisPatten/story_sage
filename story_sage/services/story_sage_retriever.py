@@ -360,62 +360,6 @@ class StorySageRetriever:
         self.logger.debug(f"Retrieved ultimate children documents: {results['ids']}")
         return results
 
-    def first_pass_query(self, query_str: str, context_filters: dict) -> dict[str, str]:
-        """Performs a broader initial query to get a larger set of potentially relevant chunks.
-
-        This method is useful for getting a wider range of results that can be
-        filtered or re-ranked in subsequent processing steps.
-
-        Args:
-            query_str (str): The query string to search for
-            context_filters (dict): The context filters to apply to the search
-
-        Returns:
-            dict[str, str]: A dictionary mapping chunk IDs to their content
-
-        Example:
-            >>> context = {'series_id': 1, 'book_number': 2, 'chapter_number': 3}
-            >>> results = retriever.first_pass_query("Who is the king?", context)
-            >>> for chunk_id, content in results.items():
-            ...     print(f"Chunk {chunk_id}: {content[:50]}...")
-        """
-        where_filter = self.get_where_filter(context_filters, include_entities=False)
-
-        results = self.vector_store.query(
-            query_texts=[query_str],
-            n_results=50,
-            include=['metadatas', 'documents'],
-            where=where_filter
-        )
-        if len(results['ids']) == 0:
-            return {}
-        for metadata in results['metadatas'][0]:
-            if 'full_chunk' in metadata:
-                del metadata['full_chunk']
-        doc_dict = {id: doc for id, doc in zip(results['ids'][0], results['documents'][0])}
-        return doc_dict
-    
-    def get_by_ids(self, ids: List[str]) -> GetResult:
-        """Retrieves specific documents from the vector store using their IDs.
-
-        Useful for fetching exact chunks when you already know their IDs from
-        previous queries.
-
-        Args:
-            ids (List[str]): List of chunk IDs to retrieve
-
-        Returns:
-            GetResult: ChromaDB result containing the requested documents and their metadata
-
-        Example:
-            >>> chunk_ids = ['chunk_123', 'chunk_456']
-            >>> results = retriever.get_by_ids(chunk_ids)
-            >>> print(results['documents'])  # The content of the requested chunks
-        """
-        self.logger.debug(f'Retrieving documents by IDs: {ids}')
-        results = self.vector_store.get(ids=ids, include=['metadatas'])
-        return results
-
     def load_processed_files(self, chunk_tree: Union[_RaptorResults, str], 
                              series_id: int) -> None:
         """Loads processed files from RaptorProcessor into the vector store.
