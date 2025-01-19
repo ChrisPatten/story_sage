@@ -28,9 +28,9 @@ Expected results:
 """
 
 from story_sage.utils.embedding import Embedder, load_chunk_from_disk, embed_documents
-from story_sage.models.story_sage_entity import *
-from story_sage.models.story_sage_series import StorySageSeries
-from story_sage.models.story_sage_config import StorySageConfig
+from story_sage.models.entity import *
+from story_sage.models.series import StorySageSeries
+from story_sage.models.config import StorySageConfig
 import yaml
 import glob
 import chromadb

@@ -54,7 +54,7 @@ from tqdm import tqdm
 import argparse
 from openai import OpenAI
 from pydantic import BaseModel
-from story_sage.models.story_sage_config import StorySageConfig
+from story_sage.models.config import StorySageConfig
 import yaml
 import httpx
 from glob import glob

@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Tuple
-from .story_sage_conversation import StorySageConversation, StorySageContext
+from .conversation import StorySageConversation, StorySageContext
 
 
 INPUT_TOKENS_CPM = 0.15

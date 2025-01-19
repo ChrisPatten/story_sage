@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
-from .story_sage_series import StorySageSeries
-from .story_sage_entity import StorySageEntityCollection
+from .series import StorySageSeries
+from .entity import StorySageEntityCollection
 import json
 import yaml
 import logging

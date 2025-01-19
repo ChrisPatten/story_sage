@@ -38,44 +38,24 @@ Example:
 from openai import OpenAI, BadRequestError
 from typing import Dict, List, Tuple, TypeAlias, Optional, Union
 from ..models import StorySageConfig, StorySageConversation, StorySageContext
-from pydantic import BaseModel, ValidationError
+from ..models.interfaces import (
+    ResponseData, ChunkEvaluationResult, KeywordsResult, QueryResult,
+    RefinedQuestionResult, TemporalQueryResult, SearchStrategyResult,
+    SearchEvaluationResult
+)
+from pydantic import ValidationError
 import httpx
 import logging
 from ..utils.junk_drawer import EmojiFormatter
 import json
+from dataclasses import dataclass
+from .search import SearchResult, SearchStrategy
 
 _UsageType: TypeAlias = Tuple[int, int]
 """Type alias for usage information tuple containing:
     completion_tokens: Number of tokens in the generated completion
     prompt_tokens: Number of tokens in the prompt
 """
-
-class ResponseData(BaseModel):
-    response: str
-    has_answer: bool
-    follow_up: str
-
-class ChunkEvaluationResult(BaseModel):
-    chunk_scores: List[Dict[str, Union[str, int]]]
-    secondary_query: Optional[str]
-
-class KeywordsResult(BaseModel):
-    keywords: List[str]
-
-class QueryResult(BaseModel):
-    query: str
-    needs_overview: bool
-
-class RefinedQuestionResult(BaseModel):
-    refined_question: str
-
-class TemporalQueryResult(BaseModel):
-    is_temporal: bool
-    query_type: str  # 'current', 'first', 'specific_point'
-    book_number: Optional[int]
-    chapter_number: Optional[int]
-    book_position: Optional[int] 
-    relative_position: Optional[str]  # 'before', 'after', 'at'
 
 class StorySageLLM:
     """A class to handle LLM operations for document Q&A using OpenAI's API.
@@ -415,6 +395,50 @@ class StorySageLLM:
             return result, tokens
         except Exception as e:
             self.logger.error("Failed to detect temporal query: %s", str(e), exc_info=True)
+            raise
+    
+    def determine_search_strategy(self, question: str, 
+                                  model: str = None, 
+                                  conversation: Optional[StorySageConversation] = None) -> Tuple[SearchStrategyResult, Tuple[int, int]]:
+        """Determine the best search strategy for a given question."""
+        messages = self._set_up_prompt("determine_search_strategy", {"question": question}, conversation)
+        
+        try:
+            response = self.client.beta.chat.completions.parse(
+                model=model or self.config.completion_model,
+                messages=messages,
+                response_format=SearchStrategyResult
+            )
+            result: SearchStrategyResult = response.choices[0].message.parsed
+            tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
+            return result, tokens
+        except Exception as e:
+            self.logger.error("Failed to determine search strategy: %s", str(e), exc_info=True)
+            raise
+
+    def evaluate_search_results(self, question: str, 
+                              similarity_chunks: Dict[str, str],
+                              keyword_chunks: List[SearchResult],
+                              model: str = None,
+                              conversation: Optional[StorySageConversation] = None) -> Tuple[SearchEvaluationResult, Tuple[int, int]]:
+        """Evaluate which search results are more relevant for the question."""
+        messages = self._set_up_prompt("evaluate_search_results", {
+                                        "question": question,
+                                        "similarity_chunks": similarity_chunks,
+                                        "keyword_chunks": keyword_chunks
+                                        }, conversation)
+        
+        try:
+            response = self.client.beta.chat.completions.parse(
+                model=model or self.config.completion_model,
+                messages=messages,
+                response_format=SearchEvaluationResult
+            )
+            result: SearchEvaluationResult = response.choices[0].message.parsed
+            tokens: _UsageType = (response.usage.completion_tokens, response.usage.prompt_tokens)
+            return result, tokens
+        except Exception as e:
+            self.logger.error("Failed to evaluate search results: %s", str(e), exc_info=True)
             raise
     
     def _get_conversation_turns(self, conversation: StorySageConversation) -> List[Dict[str, str]]:

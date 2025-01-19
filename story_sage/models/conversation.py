@@ -4,7 +4,7 @@ import uuid
 import redis
 import logging
 import time
-from .story_sage_context import StorySageContext
+from .context import StorySageContext
 
 logger = logging.getLogger(__name__)
 

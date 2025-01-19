@@ -19,8 +19,8 @@ import numpy as np
 import re
 from langchain_core.documents.base import Document
 from typing import List, Dict, Set, Tuple
-from story_sage.models.story_sage_series import StorySageSeries
-from story_sage.models.story_sage_entity import StorySageEntityCollection, StorySageEntityGroup, StorySageEntity, GroupType
+from story_sage.models.series import StorySageSeries
+from story_sage.models.entity import StorySageEntityCollection, StorySageEntityGroup, StorySageEntity, GroupType
 import json
 
 

@@ -4,9 +4,10 @@ import regex as re
 from typing import List, Optional, Dict, Any, Tuple
 
 from chromadb import QueryResult
-from ..models import StorySageConfig, StorySageState, StorySageContext
-from . import StorySageLLM, StorySageRetriever
-from .story_sage_llm import _UsageType, ResponseData, ChunkEvaluationResult, KeywordsResult, QueryResult, RefinedQuestionResult
+from ..models import StorySageConfig, StorySageState, StorySageContext, Chunk
+from .llm import StorySageLLM, ResponseData, ChunkEvaluationResult, RefinedQuestionResult, KeywordsResult
+from .retriever import StorySageRetriever
+from .search import StorySageSearch, SearchResult, SearchStrategy
 from ..utils import flatten_nested_list
 
 # Constants
@@ -67,8 +68,7 @@ class StorySageChain:
         self.raptor_retriever = StorySageRetriever(
             chroma_path=config.chroma_path, 
             chroma_collection_name=config.raptor_collection, 
-            n_chunks=config.n_chunks,
-            logger=self.logger
+            n_chunks=config.n_chunks
         )
         self.llm = StorySageLLM(config, log_level=log_level)
         self.state = state
@@ -76,6 +76,7 @@ class StorySageChain:
         self.secondary_query = None
         self._chunk_cache = {}  # Add LRU cache for frequently accessed chunks
         self._cache_size = 1000  # Maximum number of cached chunks
+        self.search_service = StorySageSearch()
 
     def invoke(self) -> StorySageState:
         """Execute the chain to generate a response to the question in the current state."""
@@ -84,10 +85,10 @@ class StorySageChain:
 
         try:
             # Early exit for simple questions that don't need context
-            if self._is_simple_question(self.state.question):
-                self.logger.info('Question is simple and does not require context')
-                if self._generate_simple_response():
-                    return self.state
+            # if self._is_simple_question(self.state.question):
+            #     self.logger.info('Question is simple and does not require context')
+            #     if self._generate_simple_response():
+            #         return self.state
 
             # Get context filters and handle followup questions
             self._get_context_filters()
@@ -108,24 +109,77 @@ class StorySageChain:
 
     def _process_main_question(self) -> bool:
         """Process the main question through the retrieval and generation pipeline."""
-        # Generate optimized search query
+        search_strategy, needs_similarity_search = self._determine_search_strategy()
+        
+        # Get both similarity search and keyword search results
+        if needs_similarity_search:
+            similarity_chunks = self._get_similarity_search_results()
+        else: similarity_chunks = []
+        keyword_chunks = self._get_keyword_search_results(search_strategy)
+        
+        # Evaluate which results are better
+        best_chunks = self._evaluate_search_results(similarity_chunks, keyword_chunks)
+        
+        if not best_chunks:
+            return self._fallback_to_keyword_search()
+
+        self.state.target_ids = [chunk.chunk_key for chunk in best_chunks]
+        return self._retrieve_by_ids() and self._generate()
+
+    def _determine_search_strategy(self) -> Tuple[SearchStrategy, bool]:
+        """Determine the best search strategy for the current question."""
+        try:
+            strategy_result, tokens = self.llm.determine_search_strategy(
+                question=self.state.question,
+                conversation=self.state.conversation
+            )
+            self._add_usage(tokens)
+            return SearchStrategy(strategy_result.strategy), strategy_result.needs_similarity_search
+        except Exception as e:
+            self.logger.error(f"Error determining search strategy: {e}")
+            return SearchStrategy.EXACT, True
+
+    def _get_similarity_search_results(self) -> List[Chunk]:
+        """Get results using vector similarity search."""
         if not self._generate_search_query():
             self.state.search_query = self.state.question
-
-        # Get initial context and evaluate chunks in batches
+            
         if not self._get_initial_context():
-            return self._fallback_to_keyword_search()
+            return []
+            
+        return self.state.summary_chunks
 
-        relevant_chunks = self._process_chunks_in_batches(self.state.summary_chunks)
-        if not relevant_chunks:
-            return self._fallback_to_keyword_search()
+    def _get_keyword_search_results(self, strategy: SearchStrategy) -> List[Chunk]:
+        """Get results using keyword-based search with the specified strategy."""
+        try:
+            return self.search_service.search(
+                text=self.state.question,
+                chunks=self.state.summary_chunks,
+                strategy=strategy
+            )
+        except Exception as e:
+            self.logger.error(f"Error in keyword search: {e}")
+            return []
 
-        # Retrieve and generate from relevant chunks
-        self.state.target_ids = relevant_chunks
-        if self._retrieve_by_ids() and self._generate():
-            return True
-
-        return self._fallback_to_keyword_search()
+    def _evaluate_search_results(self, similarity_chunks: List[Chunk], 
+                               keyword_chunks: List[Chunk]) -> List[Chunk]:
+        """Have the LLM evaluate which search results are more relevant."""
+        try:
+            evaluation_result, tokens = self.llm.evaluate_search_results(
+                question=self.state.question,
+                similarity_chunks=[chunk.to_json() for chunk in similarity_chunks],
+                keyword_chunks=[chunk.to_json() for chunk in keyword_chunks],
+                conversation=self.state.conversation
+            )
+            self._add_usage(tokens)
+            
+            if evaluation_result.use_similarity:
+                return similarity_chunks
+            else:
+                return keyword_chunks[:self.config.n_chunks]
+        except Exception as e:
+            self.logger.error(f"Error evaluating search results: {e}")
+            return similarity_chunks
 
     def _process_chunks_in_batches(self, chunks: Dict[str, str], batch_size: int = 10) -> List[str]:
         """Process chunks in batches for more efficient evaluation."""
@@ -172,6 +226,8 @@ class StorySageChain:
             r"^(can|could) you explain",
             r"^tell me (about|what)",
         ]
+        if type(question) is not str:
+            self.logger.error(f"Question is not a string: {question}")
         return any(re.match(pattern, question.lower()) for pattern in simple_patterns)
 
     def _generate_simple_response(self) -> bool:
@@ -300,13 +356,15 @@ class StorySageChain:
         return relevant_chunks, result.secondary_query
 
     def _retrieve_by_ids(self) -> bool:
-        """Retrieve context using specific chunk IDs.
-        
-        Returns:
-            bool: True if context was successfully retrieved and populated, False if no valid chunks found
-        """
+        """Retrieve context using specific chunk IDs."""
         self.logger.debug('Retrieving context by IDs')
         self.state.node_history.append('GetContextByIDs')
+        
+        # Ensure target_ids contains valid string IDs
+        if not self.state.target_ids or not isinstance(self.state.target_ids[0], str):
+            self.logger.debug('No valid target IDs found')
+            return False
+            
         try:
             results = self.raptor_retriever.retrieve_from_hierarchy(self.state.target_ids)
             if not results:
@@ -315,11 +373,7 @@ class StorySageChain:
         except Exception as e:
             self.logger.error(f'Error retrieving context by IDs: {e}')
             return False
-        
-        if len(results['ids']) < 1:
-            self.logger.debug('No context found by IDs')
-            return False
-        
+
         self.state.context = self._get_context_from_result(results)
         return True
 
@@ -378,7 +432,7 @@ class StorySageChain:
             self.logger.error(f'Error retrieving context from keywords: {e}')
             return False
 
-        if len(results['ids']) < 1:
+        if 'ids' in results and len(results['ids']) < 1:
             self.logger.debug('No context found by keywords')
             return False
         
@@ -415,38 +469,32 @@ class StorySageChain:
             self.logger.error(f'Error generating response: {e}')
             return False
 
-    def _get_context_from_result(self, results: Dict[str, List[Any]]) -> List[StorySageContext]:
+    def _get_context_from_result(self, results: List[Chunk]) -> List[StorySageContext]:
         """Convert query results into StorySageContext objects.
         
         Args:
-            results: Dictionary containing query results with 'ids' and 'metadatas' keys
+            results: List of Chunk objects
             
         Returns:
             List[StorySageContext]: List of context objects sorted by chunk ID
         """
-        self.logger.debug(f'Getting context from result: {results["ids"]}')
+        #self.logger.debug(f'Getting context from result: {results}')
         try:
-            results['ids'] = flatten_nested_list(results['ids'])
-            results['metadatas'] = flatten_nested_list(results['metadatas'])
-            
-            for id, m in zip(results['ids'], results['metadatas']):
-                m['id'] = id
-            
-            results = sorted(results['metadatas'], key=lambda x: (x['id']))
-
+            # Check if we have any results
+            if not results:
+                self.logger.debug('No results found')
+                return []
+        
             return [
                 StorySageContext.from_dict(
                     data = {
-                        'chunk_id': m['id'], 
-                        'book_number': m['book_number'], 
-                        'chapter_number': m['chapter_number'], 
-                        'chunk': m['full_chunk']
+                        'chunk_id': chunk.chunk_key, 
+                        'book_number': chunk.metadata.book_number, 
+                        'chapter_number': chunk.metadata.chapter_number, 
+                        'chunk': chunk.text
                     } 
-                ) for m in results
+                ) for chunk in results
             ]
-        except KeyError as e:
-            self.logger.error(f'Tried to access a key that doesn\'t exist in results[\'metadatas\']: {e}')
-            return []
         except Exception as e:
             self.logger.error(f'Unexpected error processing results: {e}')
             return []

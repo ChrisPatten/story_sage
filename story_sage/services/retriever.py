@@ -8,7 +8,7 @@ import chromadb  # ChromaDB client for vector storage and retrieval
 from chromadb import Documents, EmbeddingFunction, Embeddings
 from chromadb.api import Collection
 from chromadb.api.types import GetResult, QueryResult
-from story_sage.utils import Chunk, ChunkMetadata
+from story_sage.models import ChunkMetadata, Chunk
 from story_sage.utils.raptor import _RaptorResults, RaptorProcessor
 from copy import copy
 
@@ -125,7 +125,7 @@ class StorySageRetriever:
         # Initialize the embedding function using StorySageEmbedder
         self.embedder = StorySageEmbedder()
         # Set up the ChromaDB client with persistent storage at the specified path
-        if chroma_path is not None:
+        if (chroma_path is not None):
             self.chroma_client = chromadb.PersistentClient(path=chroma_path)
         else:
             self.chroma_client = chromadb.EphemeralClient()
@@ -141,7 +141,7 @@ class StorySageRetriever:
         self.logger = logger or logging.getLogger(__name__)
 
     def retrieve_chunks(self, query_str, context_filters: dict, n_results: int = None, 
-                       sort_order: str = None) -> QueryResult:
+                       sort_order: str = None) -> List[Chunk]:
         """Retrieves text chunks relevant to the query and context.
 
         Args:
@@ -171,78 +171,99 @@ class StorySageRetriever:
             include=['metadatas', 'documents'],  # Include metadata and documents in the results
             where=combined_filter  # Apply the combined filter
         )
-
-        # Apply temporal sorting if requested
-        if sort_order and len(query_result['ids'][0]) > 0:
-            results_with_meta = list(zip(
-                query_result['ids'][0],
-                query_result['documents'][0],
-                query_result['metadatas'][0],
-                query_result['distances'][0]
-            ))
-            
+        
+        #self.logger.debug(f"Query result from retrieve_chunks: {query_result}")
+        
+        try:
+            results: List[Chunk] = Chunk.from_chroma_results(query_result)
+        except Exception as e:
+            self.logger.error(f"Error converting query results to Chunk objects in retrieve_chunks: {e}")
+            raise e
+        
+        if sort_order and len(results) > 0:
             if sort_order == 'chronological':
-                results_with_meta.sort(key=lambda x: (x[2]['book_number'], x[2]['chapter_number']))
+                results.sort(key=lambda x: (x.metadata.book_number, x.metadata.chapter_number))
             elif sort_order == 'reverse_chronological':
-                results_with_meta.sort(key=lambda x: (x[2]['book_number'], x[2]['chapter_number']), reverse=True)
-                
-            # Reconstruct query result
-            query_result['ids'] = [[x[0] for x in results_with_meta]]
-            query_result['documents'] = [[x[1] for x in results_with_meta]]
-            query_result['metadatas'] = [[x[2] for x in results_with_meta]]
-            query_result['distances'] = [[x[3] for x in results_with_meta]]
+                results.sort(key=lambda x: (x.metadata.book_number, x.metadata.chapter_number), reverse=True)
 
-        if len(query_result['ids'][0]) < 1:
+        if len(results) < 1:
             self.logger.warning(f'No results found with query {query_str} and filters {combined_filter}')
         # Log the retrieved documents for debugging purposes
-        self.logger.debug(f"Retrieved documents: {query_result['ids']}")
+        self.logger.debug(f"Retrieved {len(results)} chunks.")
         # Return the query results
-        return query_result
+        return results
     
-    def get_by_keyword(self, keywords: List[str], context_filters: dict) -> QueryResult:
-        """Retrieves text chunks containing specific keywords within given context.
-
-        Performs an exact keyword match search within the vector store, considering
-        the provided context filters. Keywords are case-insensitive.
-
-        Args:
-            keywords (List[str]): List of keywords to search for (e.g., ["sword", "castle"])
-            context_filters (dict): Filters to narrow down the search scope, containing:
-                - book_number (int): The current book number
-                - chapter_number (int): The current chapter number
-                - series_id (int): The ID of the book series
-                - entities (list, optional): List of entity IDs to filter by
-
-        Returns:
-            QueryResult: A ChromaDB query result containing:
-                - documents: List of text chunks containing the keywords
-                - metadatas: List of metadata for each chunk
-                - ids: Unique IDs for each chunk
-
-        Example:
-            >>> context = {'series_id': 1, 'book_number': 2, 'chapter_number': 3}
-            >>> result = retriever.get_by_keyword(['sword', 'castle'], context)
-            >>> print(result['documents'])  # Texts containing 'sword' or 'castle'
-        """
+    def get_by_keyword(self, keywords: List[str], context_filters: dict) -> List[Chunk]:
+        """Retrieves text chunks containing specific keywords within given context."""
         where_filter = self.get_where_filter(context_filters=context_filters)
-        keywords_dict_list = [{'$contains': str.lower(keyword)} for keyword in keywords]
-        if len(keywords_dict_list) > 1:
-            where_doc = {'$or': keywords_dict_list}
-        else:
-            where_doc = keywords_dict_list[0]
-
-        query_result = self.vector_store.get(
-            limit=self.n_chunks,
-            include=['metadatas', 'documents'],
-            where=where_filter,
-            where_document=where_doc
-        )
-
-        self.logger.debug(f"Retrieved documents: {query_result['ids']}")
-        return query_result
         
+        # Handle empty or invalid keywords
+        if not keywords:
+            self.logger.warning("No keywords provided for search")
+            return []
         
-    
+        try:
+            # Debug log the input
+            self.logger.debug(f"Input keywords type: {type(keywords)}, value: {keywords}")
+            
+            # Ensure keywords is a list of strings
+            if isinstance(keywords, str):
+                keywords = [keywords]
+            elif not isinstance(keywords, list):
+                self.logger.warning(f"Converting keywords of type {type(keywords)} to list")
+                keywords = list(keywords)
+            
+            # Convert each keyword to lowercase string if possible
+            processed_keywords = []
+            for k in keywords:
+                try:
+                    if k is not None:
+                        if isinstance(k, list):
+                            self.logger.error(f"Keyword is a list instead of a string: {k}")
+                            continue
+                        processed_keyword = str(k).lower()
+                        self.logger.debug(f"Processed keyword: {k} -> {processed_keyword}")
+                        processed_keywords.append(processed_keyword)
+                except Exception as e:
+                    self.logger.error(f"Error processing keyword {k}: {e}")
+            
+            keywords = [k for k in processed_keywords if k]  # Remove empty strings
+            
+            if not keywords:
+                self.logger.warning("No valid keywords after processing")
+                return []
+                
+            # Debug log the final keywords
+            self.logger.debug(f"Final processed keywords: {keywords}")
+            
+            keywords_dict_list = [{'$contains': keyword} for keyword in keywords]
+            where_doc = {'$or': keywords_dict_list} if len(keywords_dict_list) > 1 else keywords_dict_list[0]
+            
+            self.logger.debug(f"Querying with where_filter: {where_filter}")
+            self.logger.debug(f"Querying with where_document: {where_doc}")
+            
+            query_result = self.vector_store.get(
+                limit=self.n_chunks,
+                include=['metadatas', 'documents'],
+                where=where_filter,
+                where_document=where_doc
+            )
+
+            self.logger.debug(f"Query result from get_by_keyword: {query_result}")
+            
+            try:
+                result: List[Chunk] = Chunk.from_chroma_results(query_result)
+            except Exception as e:
+                self.logger.error(f"Error converting query results to Chunk objects in get_by_keyword: {e}")
+                raise e
+            
+            #self.logger.debug(f"Formatted result: {result}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error in keyword search: {e}", exc_info=True)
+            return []
+
     def get_where_filter(self, context_filters: dict) -> dict:
         """Constructs a filter dictionary for ChromaDB queries."""
         def _safe_add_and(filter: dict, new_item: dict) -> dict:
@@ -345,42 +366,78 @@ class StorySageRetriever:
         Returns:
             List[str]: List of ultimate children IDs.
         """
-        self.logger.debug(f"Recursively retrieving children for parent IDs: {parent_ids}")
+        #self.logger.debug(f"Recursively retrieving children for parent IDs: {parent_ids}")
         
         children_ids = set()
         for parent_id in parent_ids:
-            result = self.vector_store.get(ids=[parent_id], include=['metadatas'])
-            if result['metadatas'][0]['children']:
-                child_ids = result['metadatas'][0]['children'].split(',')
-                children_ids.update(self._recursive_retrieve_from_hierarchy(child_ids))
-            else:
-                children_ids.add(parent_id)
+            try:
+                result = self.vector_store.get(ids=[parent_id], include=['metadatas'])
+                #self.logger.debug(f"Result for parent_id {parent_id}: {result}")
+                if result['metadatas'] and result['metadatas'][0].get('children'):
+                    child_ids = result['metadatas'][0]['children'].split(',')
+                    children_ids.update(self._recursive_retrieve_from_hierarchy(child_ids))
+                else:
+                    children_ids.add(parent_id)
+            except IndexError as e:
+                self.logger.error(f"IndexError for parent_id {parent_id}: {e}")
+            except Exception as e:
+                self.logger.error(f"Error retrieving children for parent_id {parent_id}: {e}")
         
         return list(children_ids)
 
-    def retrieve_from_hierarchy(self, parent_ids: List[str]) -> QueryResult:
+    def retrieve_from_hierarchy(self, parent_ids: List[str]) -> List[Chunk]:
         """Finds the ultimate children of the provided parent IDs.
 
         Args:
             parent_ids (List[str]): List of parent IDs to start the search from.
 
         Returns:
-            QueryResult: A ChromaDB query result containing:
-                - documents: List of text chunks containing the ultimate children
-                - metadatas: List of metadata for each chunk
-                - ids: Unique IDs for each chunk
+            List[Chunk]: A list of Chunks containing the ultimate children.
         """
         self.logger.debug(f"Retrieving ultimate children from parent IDs: {parent_ids}")
         
-        ultimate_children_ids = self._recursive_retrieve_from_hierarchy(parent_ids)
-        
-        results = self.vector_store.get(
-            ids=ultimate_children_ids,
-            include=['metadatas', 'documents']
-        )
-        
-        self.logger.debug(f"Retrieved ultimate children documents: {results['ids']}")
-        return results
+        if not parent_ids:
+            self.logger.warning("No parent IDs provided")
+            return []
+            
+        if not isinstance(parent_ids, list):
+            self.logger.warning(f"Converting parent_ids of type {type(parent_ids)} to list")
+            parent_ids = list(parent_ids)
+            
+        try:
+            # Filter out non-string IDs
+            valid_ids = [id for id in parent_ids if isinstance(id, str)]
+            if not valid_ids:
+                self.logger.warning("No valid string IDs found in parent_ids")
+                return []
+            
+            ultimate_children_ids = self._recursive_retrieve_from_hierarchy(valid_ids)
+            self.logger.debug(f"Retrieved ultimate children IDs: {ultimate_children_ids}")
+            
+            if not ultimate_children_ids:
+                return []
+            
+            results = self.vector_store.get(
+                ids=ultimate_children_ids,
+                include=['metadatas', 'documents']
+            )
+            
+            #self.logger.debug(f"Query result from retrieve_from_hierarchy: {results}")
+            
+            # Ensure results are in the correct format
+            formatted_results = {
+                'ids': [results.get('ids', [])],
+                'documents': [results.get('documents', [])],
+                'metadatas': [results.get('metadatas', [])],
+                'distances': [[0.0] * len(results.get('ids', []))]
+            }
+            
+            #self.logger.debug(f"Formatted results: {formatted_results}")
+            return Chunk.from_chroma_results(formatted_results)
+            
+        except Exception as e:
+            self.logger.error(f"Error retrieving hierarchy: {e}", exc_info=True)
+            return []
 
     def load_processed_files(self, chunk_tree: Union[_RaptorResults, str], 
                              series_id: int) -> None:
