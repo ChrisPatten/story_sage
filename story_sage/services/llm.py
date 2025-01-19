@@ -71,25 +71,13 @@ class StorySageLLM:
         logger (Logger): Logger instance for the class
     """
     
-    def __init__(self, config: StorySageConfig, log_level: int = logging.INFO):
+    def __init__(self, config: StorySageConfig):
         self.config = config
         self.prompts = config.prompts
         self.client = OpenAI(api_key=config.openai_api_key, http_client=httpx.Client(verify=False))
 
         # Setup logger with emoji formatter
         self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(log_level)
-        
-        # Create console handler if none exists
-        if not self.logger.handlers:
-            console_handler = logging.StreamHandler()
-            console_handler.setLevel(log_level)
-            
-            # Create and set formatter
-            formatter = EmojiFormatter('%(emoji)s %(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            console_handler.setFormatter(formatter)
-            
-            self.logger.addHandler(console_handler)
         
         self.logger.info("Initializing StorySageLLM with model %s", config.completion_model)
         self.logger.debug("API configuration complete")

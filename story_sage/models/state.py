@@ -1,11 +1,12 @@
-from dataclasses import dataclass, field
+from pydantic import BaseModel
 from typing import List, Tuple
 from .conversation import StorySageConversation, StorySageContext
+from .interfaces import ContextFilters
 
 
 INPUT_TOKENS_CPM = 0.15
 OUTPUT_TOKENS_CPM = 0.6
-@dataclass
+
 class StorySageState():
     """Represents the current state of a StorySage query session.
     
@@ -45,23 +46,27 @@ class StorySageState():
         >>> state.answer = "Harry Potter is a young wizard..."
     """
 
-    question: str
-    book_number: int
-    chapter_number: int
-    series_id: int
-    summary_chunks: List[dict] = field(default_factory=list)  # RAPTOR top level summaries
-    context_filters: dict = field(default_factory=dict)  # Filters for context retrieval
-    initial_context: List[dict] = field(default_factory=list)  # Initial list of chunk IDs based on search of summaries
-    target_ids: List[str] = field(default_factory=list)  # Specific chunks to get full text from
-    context: List[StorySageContext] = field(default_factory=list)  # Retrieved context chunks
-    answer: str = None  # Generated response
-    search_query: str = None
-    entities: List[str] = field(default_factory=list)  # Extracted relevant entities
-    conversation: StorySageConversation = None  # Conversation history
-    node_history: List[str] = field(default_factory=list)  # Track traversed nodes
-    tokens_used: Tuple[int, int] = (0, 0)  # Token usage tracking
-    needs_overview: bool = False  # Flag to indicate if an overview is needed
-    sort_order: str = None  # Add this field for temporal query sorting
+    def __init__(self, data):
+        self.question: str = None
+        self.book_number: int = 99
+        self.chapter_number: int = 99
+        self.series_id: int = None
+        self.context_filters: ContextFilters = ContextFilters() # Filters for context retrieval
+        self.summary_chunks: List[dict] = []  # RAPTOR top level summaries
+        self.initial_context: List[dict] = []  # Initial list of chunk IDs based on search of summaries
+        self.target_ids: List[str] = []  # Specific chunks to get full text from
+        self.context: List[StorySageContext] = []  # Retrieved context chunks
+        self.answer: str = None  # Generated response
+        self.search_query: str = None
+        self.entities: List[str] = []  # Extracted relevant entities
+        self.conversation: StorySageConversation = None  # Conversation history
+        self.node_history: List[str] = []  # Track traversed nodes
+        self.tokens_used: Tuple[int, int] = (0, 0)  # Token usage tracking
+        self.needs_overview: bool = False  # Flag to indicate if an overview is needed
+        self.sort_order: str = None  # Add this field for temporal query sorting
+
+        for key, value in data.items():
+            setattr(self, key, value)
 
     def get_cost(self) -> str:
         cost = (self.tokens_used[0]/1000000*INPUT_TOKENS_CPM) + (self.tokens_used[1]/1000000*OUTPUT_TOKENS_CPM)

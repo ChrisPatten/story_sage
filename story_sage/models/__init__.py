@@ -19,5 +19,6 @@ from .interfaces import (
     RefinedQuestionResult,
     TemporalQueryResult,
     SearchStrategyResult,
-    SearchEvaluationResult
+    SearchEvaluationResult,
+    ContextFilters
 )

@@ -1,6 +1,6 @@
 # Import necessary libraries and modules
 import logging  # For logging debug information
-from typing import List, Union, Tuple  # For type annotations
+from typing import List, Union,TypedDict, Optional  # For type annotations
 import torch
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -8,7 +8,7 @@ import chromadb  # ChromaDB client for vector storage and retrieval
 from chromadb import Documents, EmbeddingFunction, Embeddings
 from chromadb.api import Collection
 from chromadb.api.types import GetResult, QueryResult
-from story_sage.models import ChunkMetadata, Chunk
+from story_sage.models import Chunk, StorySageConfig, ContextFilters
 from story_sage.utils.raptor import _RaptorResults, RaptorProcessor
 from copy import copy
 
@@ -53,9 +53,6 @@ class StorySageEmbedder(EmbeddingFunction):
         # Move the model to the selected device
         self.model = self.model.to(self.device)
 
-        if 'log_level' in kwargs:
-            self.logger.setLevel(kwargs['log_level'])
-
     def __call__(self, input: Documents) -> Embeddings:
         """Generates embeddings for the provided documents.
 
@@ -67,14 +64,11 @@ class StorySageEmbedder(EmbeddingFunction):
                 embedding for a single document.
         """
         # Log the number of texts to embed
-        self.logger.debug(f"Embedding {len(input)} texts.")
+        self.logger.info(f"Embedding {len(input)} texts.")
         # Generate embeddings using the model
         embeddings = self.model.encode(input).tolist()
-        # Log that embedding is completed
-        self.logger.debug("Embedding completed.")
         # Return the embeddings
         return embeddings
-
 
 class StorySageRetriever:
     """Retrieves relevant text chunks from a vector store based on the user's query.
@@ -110,7 +104,8 @@ class StorySageRetriever:
         ]
     """
 
-    def __init__(self, chroma_path: str = None, chroma_collection_name: str = None,
+    def __init__(self, config: StorySageConfig = None, 
+                 chroma_path: str = None, chroma_collection_name: str = None,
                  n_chunks: int = 5, logger: logging.Logger = None):
         """Initializes the StorySageRetriever with necessary configuration.
 
@@ -125,23 +120,35 @@ class StorySageRetriever:
         # Initialize the embedding function using StorySageEmbedder
         self.embedder = StorySageEmbedder()
         # Set up the ChromaDB client with persistent storage at the specified path
-        if (chroma_path is not None):
+        if chroma_path is not None:
             self.chroma_client = chromadb.PersistentClient(path=chroma_path)
+        elif config is not None:
+            self.chroma_client = chromadb.PersistentClient(path=config.chroma_path)
         else:
             self.chroma_client = chromadb.EphemeralClient()
+
         # Get the vector store collection from ChromaDB using the embedder
-        chroma_collection_name = chroma_collection_name or 'story_sage_collection'
+        if chroma_collection_name is not None:
+            collection_name = chroma_collection_name
+        elif config is not None:
+            collection_name = config.raptor_collection
+        else:
+            collection_name = 'story_sage_collection'
+
         self.vector_store = self.chroma_client.get_or_create_collection(
-            name=chroma_collection_name,
+            name=collection_name,
             embedding_function=self.embedder
         )
         # Set the number of chunks to retrieve per query
-        self.n_chunks = n_chunks
+        if config is not None:
+            self.n_chunks = config.n_chunks
+        else:
+            self.n_chunks = n_chunks
+
         # Initialize the logger for this module
         self.logger = logger or logging.getLogger(__name__)
 
-    def retrieve_chunks(self, query_str, context_filters: dict, n_results: int = None, 
-                       sort_order: str = None) -> List[Chunk]:
+    def retrieve_by_similarity(self, query_str, context_filters: ContextFilters, n_results: int = None, sort_order: str = None) -> List[Chunk]:
         """Retrieves text chunks relevant to the query and context.
 
         Args:
@@ -154,13 +161,14 @@ class StorySageRetriever:
                 - None: Sort by similarity score (default)
         """
         # Log the incoming query and filters for debugging
-        self.logger.debug(f"Retrieving chunks with query: {query_str}, context_filters: {context_filters}")
+        self.logger.info(f"Retrieving chunks by similarity for query: {query_str}")
         n_results = n_results or self.n_chunks
 
-        if not context_filters:
-            raise ValueError("Context filters are required to retrieve relevant chunks.")
 
-        combined_filter = self.get_where_filter(context_filters)
+        if not isinstance(context_filters, ContextFilters):
+            context_filters = ContextFilters(**context_filters)
+
+        combined_filter = self._get_where_filter(context_filters)
         # Log the combined filter being used for the query
         self.logger.debug(f"Combined filter: {combined_filter}")
 
@@ -171,11 +179,11 @@ class StorySageRetriever:
             include=['metadatas', 'documents'],  # Include metadata and documents in the results
             where=combined_filter  # Apply the combined filter
         )
-        
-        #self.logger.debug(f"Query result from retrieve_chunks: {query_result}")
+
+        self.logger.info(f"Retrieved {len(query_result['ids'][0])} chunks by similarity")
         
         try:
-            results: List[Chunk] = Chunk.from_chroma_results(query_result)
+            results = Chunk.from_chroma_results(query_result)
         except Exception as e:
             self.logger.error(f"Error converting query results to Chunk objects in retrieve_chunks: {e}")
             raise e
@@ -189,203 +197,32 @@ class StorySageRetriever:
         if len(results) < 1:
             self.logger.warning(f'No results found with query {query_str} and filters {combined_filter}')
         # Log the retrieved documents for debugging purposes
-        self.logger.debug(f"Retrieved {len(results)} chunks.")
+        self.logger.info(f"Retrieved {len(results)} chunks.")
         # Return the query results
         return results
     
-    def get_by_keyword(self, keywords: List[str], context_filters: dict) -> List[Chunk]:
+    def retrieve_all_with_filters(self, context_filters: Union[ContextFilters, dict]) -> List[Chunk]:
         """Retrieves text chunks containing specific keywords within given context."""
-        where_filter = self.get_where_filter(context_filters=context_filters)
-        
-        # Handle empty or invalid keywords
-        if not keywords:
-            self.logger.warning("No keywords provided for search")
-            return []
-        
-        try:
-            # Debug log the input
-            self.logger.debug(f"Input keywords type: {type(keywords)}, value: {keywords}")
-            
-            # Ensure keywords is a list of strings
-            if isinstance(keywords, str):
-                keywords = [keywords]
-            elif not isinstance(keywords, list):
-                self.logger.warning(f"Converting keywords of type {type(keywords)} to list")
-                keywords = list(keywords)
-            
-            # Convert each keyword to lowercase string if possible
-            processed_keywords = []
-            for k in keywords:
-                try:
-                    if k is not None:
-                        if isinstance(k, list):
-                            self.logger.error(f"Keyword is a list instead of a string: {k}")
-                            continue
-                        processed_keyword = str(k).lower()
-                        self.logger.debug(f"Processed keyword: {k} -> {processed_keyword}")
-                        processed_keywords.append(processed_keyword)
-                except Exception as e:
-                    self.logger.error(f"Error processing keyword {k}: {e}")
-            
-            keywords = [k for k in processed_keywords if k]  # Remove empty strings
-            
-            if not keywords:
-                self.logger.warning("No valid keywords after processing")
-                return []
-                
-            # Debug log the final keywords
-            self.logger.debug(f"Final processed keywords: {keywords}")
-            
-            keywords_dict_list = [{'$contains': keyword} for keyword in keywords]
-            where_doc = {'$or': keywords_dict_list} if len(keywords_dict_list) > 1 else keywords_dict_list[0]
-            
-            self.logger.debug(f"Querying with where_filter: {where_filter}")
-            self.logger.debug(f"Querying with where_document: {where_doc}")
-            
-            query_result = self.vector_store.get(
-                limit=self.n_chunks,
-                include=['metadatas', 'documents'],
-                where=where_filter,
-                where_document=where_doc
-            )
+        # Convert dict to ContextFilters if needed
+        if not isinstance(context_filters, ContextFilters):
+            context_filters = ContextFilters(**context_filters)
 
-            self.logger.debug(f"Query result from get_by_keyword: {query_result}")
-            
-            try:
-                result: List[Chunk] = Chunk.from_chroma_results(query_result)
-            except Exception as e:
-                self.logger.error(f"Error converting query results to Chunk objects in get_by_keyword: {e}")
-                raise e
-            
-            #self.logger.debug(f"Formatted result: {result}")
-            return result
+        where_filter = self._get_where_filter(context_filters=context_filters)
+        
+        self.logger.info(f"Retrieving all chunks with filters: {where_filter}")
+        try:
+            results = self.vector_store.get(
+                where=where_filter,
+                include=['metadatas']
+            )
+            return Chunk.from_chroma_results(results)
             
         except Exception as e:
             self.logger.error(f"Error in keyword search: {e}", exc_info=True)
+            self.logger.error(f"Results: {results}")
             return []
-
-    def get_where_filter(self, context_filters: dict) -> dict:
-        """Constructs a filter dictionary for ChromaDB queries."""
-        def _safe_add_and(filter: dict, new_item: dict) -> dict:
-            if '$and' in filter.keys():
-                filter['$and'].append(new_item)
-                return filter
-            else:
-                return {'$and': [filter, new_item]}
-
-        # Extract book number and position/chapter
-        book_number = context_filters.get('book_number')
-        book_position = context_filters.get('book_position')
-        chapter_number = context_filters.get('chapter_number')
-
-        # Check if this is a specific point query
-        is_specific_point = context_filters.get('query_type') == 'specific_point'
-
-        # Build filter based on either book_position or chapter_number
-        if is_specific_point:
-            # For specific points, we want exact matches up to the specified point
-            if book_position is not None:
-                where_filter = {
-                    '$and': [
-                        {'book_number': book_number},
-                        {'book_position': {'$lt': book_position}}
-                    ]
-                }
-            else:
-                where_filter = {
-                    '$and': [
-                        {'book_number': book_number},
-                        {'chapter_number': {'$lt': chapter_number}}
-                    ]
-                }
-        else:
-            # Original logic for non-specific point queries
-            if book_position is not None:
-                where_filter = {
-                    '$or': [
-                        {'book_number': {'$lt': book_number}},
-                        {'$and': [
-                            {'book_number': book_number},
-                            {'book_position': {'$lt': book_position}}
-                        ]}
-                    ]
-                }
-            else:
-                where_filter = {
-                    '$or': [
-                        {'book_number': {'$lt': book_number}},
-                        {'$and': [
-                            {'book_number': book_number},
-                            {'chapter_number': {'$lt': chapter_number}}
-                        ]}
-                    ]
-                }
-
-        # Add additional filters
-        if 'series_id' in context_filters:
-            where_filter = _safe_add_and(where_filter, {'series_id': int(context_filters.get('series_id'))})
-
-        # Handle flags
-        if context_filters.get('summaries_only', False):
-            where_filter = _safe_add_and(where_filter, {'is_summary': True})
-
-        if context_filters.get('top_level_only', False):
-            where_filter = _safe_add_and(where_filter, {'parents': ''})
-
-        if context_filters.get('exclude_summaries', False):
-            where_filter = _safe_add_and(where_filter, {'is_summary': False})
         
-        # Handle entity filters
-        if len(context_filters.get('entities', [])) > 0:
-            for entity_id in context_filters['entities']:
-                where_filter = _safe_add_and(where_filter, {'entities': entity_id})
-
-        # Handle temporal constraints
-        max_book = context_filters.get('max_book')
-        max_position = context_filters.get('max_position')
-        max_chapter = context_filters.get('max_chapter')
-        
-        if max_book is not None:
-            where_filter = _safe_add_and(where_filter, {'book_number': {'$lte': max_book}})
-            
-        if max_position is not None and book_number == max_book:
-            where_filter = _safe_add_and(where_filter, {'book_position': {'$lte': max_position}})
-        elif max_chapter is not None and book_number == max_book:
-            where_filter = _safe_add_and(where_filter, {'chapter_number': {'$lte': max_chapter}})
-
-        return where_filter
-    
-            
-    
-    def _recursive_retrieve_from_hierarchy(self, parent_ids: List[str]) -> List[str]:
-        """Recursively retrieves the ultimate children of the given parent IDs.
-
-        Args:
-            parent_ids (List[str]): List of parent IDs to start the search from.
-
-        Returns:
-            List[str]: List of ultimate children IDs.
-        """
-        #self.logger.debug(f"Recursively retrieving children for parent IDs: {parent_ids}")
-        
-        children_ids = set()
-        for parent_id in parent_ids:
-            try:
-                result = self.vector_store.get(ids=[parent_id], include=['metadatas'])
-                #self.logger.debug(f"Result for parent_id {parent_id}: {result}")
-                if result['metadatas'] and result['metadatas'][0].get('children'):
-                    child_ids = result['metadatas'][0]['children'].split(',')
-                    children_ids.update(self._recursive_retrieve_from_hierarchy(child_ids))
-                else:
-                    children_ids.add(parent_id)
-            except IndexError as e:
-                self.logger.error(f"IndexError for parent_id {parent_id}: {e}")
-            except Exception as e:
-                self.logger.error(f"Error retrieving children for parent_id {parent_id}: {e}")
-        
-        return list(children_ids)
-
-    def retrieve_from_hierarchy(self, parent_ids: List[str]) -> List[Chunk]:
+    def retrieve_from_parents(self, parent_ids: List[str]) -> List[Chunk]:
         """Finds the ultimate children of the provided parent IDs.
 
         Args:
@@ -422,22 +259,105 @@ class StorySageRetriever:
                 include=['metadatas', 'documents']
             )
             
-            #self.logger.debug(f"Query result from retrieve_from_hierarchy: {results}")
-            
-            # Ensure results are in the correct format
-            formatted_results = {
-                'ids': [results.get('ids', [])],
-                'documents': [results.get('documents', [])],
-                'metadatas': [results.get('metadatas', [])],
-                'distances': [[0.0] * len(results.get('ids', []))]
-            }
-            
             #self.logger.debug(f"Formatted results: {formatted_results}")
-            return Chunk.from_chroma_results(formatted_results)
+            return Chunk.from_chroma_results(results)
             
         except Exception as e:
             self.logger.error(f"Error retrieving hierarchy: {e}", exc_info=True)
             return []
+
+    def _get_where_filter(self, context_filters: ContextFilters) -> dict:
+        """Constructs a filter dictionary for ChromaDB queries."""
+        def _safe_add_and(filter: dict, new_item: dict) -> dict:
+            if ('$and' in filter.keys()):
+                filter['$and'].append(new_item)
+                return filter
+            else:
+                return {'$and': [filter, new_item]}
+
+        # Check if this is a specific point query
+        is_specific_point = context_filters.query_type == 'specific_point'
+
+        # Build filter based on either book_position or chapter_number
+        if is_specific_point:
+            # For specific points, we want exact matches up to the specified point
+            if context_filters.book_position is not None:
+                where_filter = {
+                    '$and': [
+                        {'book_number': context_filters.book_number},
+                        {'book_position': {'$lt': context_filters.book_position}}
+                    ]
+                }
+            else:
+                where_filter = {
+                    '$and': [
+                        {'book_number': context_filters.book_number},
+                        {'chapter_number': {'$lt': context_filters.chapter_number}}
+                    ]
+                }
+        else:
+            # Original logic for non-specific point queries
+            if context_filters.book_position is not None:
+                where_filter = {
+                    '$or': [
+                        {'book_number': {'$lt': context_filters.book_number}},
+                        {'$and': [
+                            {'book_number': context_filters.book_number},
+                            {'book_position': {'$lt': context_filters.book_position}}
+                        ]}
+                    ]
+                }
+            else:
+                where_filter = {
+                    '$or': [
+                        {'book_number': {'$lt': context_filters.book_number}},
+                        {'$and': [
+                            {'book_number': context_filters.book_number},
+                            {'chapter_number': {'$lt': context_filters.chapter_number}}
+                        ]}
+                    ]
+                }
+
+        # Add additional filters
+        if context_filters.series_id is not None:
+            where_filter = _safe_add_and(where_filter, {'series_id': int(context_filters.series_id)})
+
+        if context_filters.level is not None:
+            where_filter = _safe_add_and(where_filter, {'level': int(context_filters.level)})
+
+        # Handle flags
+        if context_filters.summaries_only:
+            where_filter = _safe_add_and(where_filter, {'is_summary': True})
+
+        if context_filters.top_level_only:
+            where_filter = _safe_add_and(where_filter, {'parents': ''})
+
+        if context_filters.exclude_summaries:
+            where_filter = _safe_add_and(where_filter, {'is_summary': False})
+        return where_filter
+            
+    def _recursive_retrieve_from_hierarchy(self, parent_ids: List[str]) -> List[str]:
+        """Recursively retrieves the ultimate children of the given parent IDs.
+
+        Args:
+            parent_ids (List[str]): List of parent IDs to start the search from.
+
+        Returns:
+            List[str]: List of ultimate children IDs.
+        """
+        #self.logger.debug(f"Recursively retrieving children for parent IDs: {parent_ids}")
+        #print(f"Recursively retrieving children for parent IDs: {parent_ids}")
+        children_ids = set(parent_ids)
+
+        results = self.vector_store.get(ids=parent_ids, include=['metadatas'])
+        
+        for meta in results['metadatas']:
+            child_ids = meta['children'].split(',')
+            if len(child_ids) > 0:
+                children_ids.update(self._recursive_retrieve_from_hierarchy(child_ids))
+
+
+        return list(children_ids)
 
     def load_processed_files(self, chunk_tree: Union[_RaptorResults, str], 
                              series_id: int) -> None:

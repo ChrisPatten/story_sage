@@ -126,7 +126,7 @@ class StorySageConfig:
         return series
 
     @classmethod
-    def from_config(cls, config: dict) -> 'StorySageConfig':
+    def from_config(cls, config: dict, sparse: bool = False) -> 'StorySageConfig':
         """Creates a new StorySageConfig instance from a configuration dictionary.
 
         Args:
@@ -188,60 +188,47 @@ class StorySageConfig:
             raptor_collection=config['RAPTOR_COLLECTION']
         )
 
-        # Load entities
-        try:
-            logger.info("Loading entities from %s", config['ENTITIES_PATH'])
-            entity_start = time.time()
-            with open(config['ENTITIES_PATH'], 'r') as file:
-                entities_dict = json.load(file)
-                ssconfig.entities = {
-                    key: StorySageEntityCollection.from_dict(value) 
-                    for key, value in entities_dict.items()
-                }
-            logger.info("Loaded %d entity collections in %.2fs", 
-                       len(ssconfig.entities), time.time() - entity_start)
-        except (json.JSONDecodeError, FileNotFoundError) as e:
-            logger.error("Failed to load entities: %s", str(e), exc_info=True)
-            raise
-
         # Load series configurations
-        try:
-            logger.info("Loading series from %s", config['SERIES_PATH'])
-            series_start = time.time()
-            with open(config['SERIES_PATH'], 'r') as file:
-                series_list = yaml.safe_load(file)
-                ssconfig.series = [StorySageSeries.from_dict(series) for series in series_list]
-            logger.info("Loaded %d series in %.2fs", 
-                       len(ssconfig.series), time.time() - series_start)
-        except (yaml.YAMLError, FileNotFoundError) as e:
-            logger.error("Failed to load series: %s", str(e), exc_info=True)
-            raise
+        if not sparse:
+            try:
+                logger.info("Loading series from %s", config['SERIES_PATH'])
+                series_start = time.time()
+                with open(config['SERIES_PATH'], 'r') as file:
+                    series_list = yaml.safe_load(file)
+                    ssconfig.series = [StorySageSeries.from_dict(series) for series in series_list]
+                logger.info("Loaded %d series in %.2fs", 
+                        len(ssconfig.series), time.time() - series_start)
+            except (yaml.YAMLError, FileNotFoundError) as e:
+                logger.error("Failed to load series: %s", str(e), exc_info=True)
+                raise
 
         # Initialize Redis connection
-        try:
-            logger.info("Connecting to Redis at %s", config['REDIS_URL'])
-            redis_start = time.time()
-            ssconfig.redis_instance = redis.Redis.from_url(config['REDIS_URL'])
-            ssconfig.redis_ex = config['REDIS_EXPIRE']
-            # Test connection
-            ssconfig.redis_instance.ping()
-            logger.info("Redis connection established in %.2fs", 
-                       time.time() - redis_start)
-        except redis.RedisError as e:
-            logger.error("Failed to connect to Redis: %s", str(e), exc_info=True)
-            raise
+        if not sparse:    
+            try:
+                logger.info("Connecting to Redis at %s", config['REDIS_URL'])
+                redis_start = time.time()
+                ssconfig.redis_instance = redis.Redis.from_url(config['REDIS_URL'])
+                ssconfig.redis_ex = config['REDIS_EXPIRE']
+                # Test connection
+                ssconfig.redis_instance.ping()
+                logger.info("Redis connection established in %.2fs", 
+                        time.time() - redis_start)
+            except redis.RedisError as e:
+                logger.error("Failed to connect to Redis: %s", str(e), exc_info=True)
+                raise
 
         # Load prompt templates
-        try:
-            logger.info("Loading prompts from %s", config['PROMPTS_PATH'])
-            prompt_start = time.time()
-            with open(config['PROMPTS_PATH'], 'r') as file:
-                ssconfig.prompts = yaml.safe_load(file)
-            logger.info("Loaded %d prompt templates in %.2fs", 
-                       len(ssconfig.prompts), time.time() - prompt_start)
-        except (yaml.YAMLError, FileNotFoundError) as e:
-            logger.error("Failed to load prompts: %s", str(e), exc_info=True)
-            raise
+        if not sparse:
+            try:
+                logger.info("Loading prompts from %s", config['PROMPTS_PATH'])
+                prompt_start = time.time()
+                with open(config['PROMPTS_PATH'], 'r') as file:
+                    ssconfig.prompts = yaml.safe_load(file)
+                logger.info("Loaded %d prompt templates in %.2fs", 
+                        len(ssconfig.prompts), time.time() - prompt_start)
+            except (yaml.YAMLError, FileNotFoundError) as e:
+                logger.error("Failed to load prompts: %s", str(e), exc_info=True)
+                raise
 
         total_time = time.time() - start_time
         logger.info("StorySageConfig initialization completed in %.2fs", total_time)

@@ -3,8 +3,7 @@ import logging
 import regex as re
 from typing import List, Optional, Dict, Any, Tuple
 
-from chromadb import QueryResult
-from ..models import StorySageConfig, StorySageState, StorySageContext, Chunk
+from ..models import StorySageConfig, StorySageState, StorySageContext, Chunk, QueryResult
 from .llm import StorySageLLM, ResponseData, ChunkEvaluationResult, RefinedQuestionResult, KeywordsResult
 from .retriever import StorySageRetriever
 from .search import StorySageSearch, SearchResult, SearchStrategy
@@ -58,9 +57,8 @@ class StorySageChain:
     needs_clarification: bool
     secondary_query: Optional[str]
 
-    def __init__(self, config: StorySageConfig, state: StorySageState, 
-                 log_level: int = logging.WARN, print_logs_to_console: bool = False):
-        self.logger = self._setup_logger(log_level, print_logs_to_console)
+    def __init__(self, config: StorySageConfig, state: StorySageState = None):
+        self.logger = logging.getLogger(__name__)
         self.config = config
         self.entities = config.entities
         self.series_list = config.series
@@ -70,8 +68,8 @@ class StorySageChain:
             chroma_collection_name=config.raptor_collection, 
             n_chunks=config.n_chunks
         )
-        self.llm = StorySageLLM(config, log_level=log_level)
-        self.state = state
+        self.llm = StorySageLLM(config)
+        self.state = state if state else StorySageState()
         self.needs_clarification = False
         self.secondary_query = None
         self._chunk_cache = {}  # Add LRU cache for frequently accessed chunks
@@ -84,17 +82,11 @@ class StorySageChain:
         self.state.node_history = []
 
         try:
-            # Early exit for simple questions that don't need context
-            # if self._is_simple_question(self.state.question):
-            #     self.logger.info('Question is simple and does not require context')
-            #     if self._generate_simple_response():
-            #         return self.state
-
             # Get context filters and handle followup questions
             self._get_context_filters()
             if self._is_followup_question():
-                if self._handle_followup_question():
-                    return self.state
+                # Rewrite the question based on previous history to resolve ambiguity
+                self._expand_followup_question()
 
             # Main question processing pipeline
             if not self._process_main_question():
@@ -109,22 +101,42 @@ class StorySageChain:
 
     def _process_main_question(self) -> bool:
         """Process the main question through the retrieval and generation pipeline."""
+        self.logger.info('Processing main question')
         search_strategy, needs_similarity_search = self._determine_search_strategy()
         
         # Get both similarity search and keyword search results
         if needs_similarity_search:
+            self.logger.info('Performing similarity search')
             similarity_chunks = self._get_similarity_search_results()
-        else: similarity_chunks = []
-        keyword_chunks = self._get_keyword_search_results(search_strategy)
-        
-        # Evaluate which results are better
-        best_chunks = self._evaluate_search_results(similarity_chunks, keyword_chunks)
-        
-        if not best_chunks:
-            return self._fallback_to_keyword_search()
+            self.logger.info(f'Got {len(similarity_chunks)} similarity chunks')
+        else: 
+            self.logger.info('Skipping similarity search')
+            similarity_chunks = []
 
-        self.state.target_ids = [chunk.chunk_key for chunk in best_chunks]
-        return self._retrieve_by_ids() and self._generate()
+        self.logger.info(f'Performing keyword search with strategy: {search_strategy}')
+        keyword_chunks = self._get_keyword_search_results(search_strategy)
+        self.logger.info(f'Got {len(keyword_chunks)} keyword chunks')
+
+        self.logger.info('Evaluating search results')
+        # Evaluate which results are better
+        if len(similarity_chunks) > 0:
+            best_chunks = self._evaluate_search_results(similarity_chunks, keyword_chunks) or []
+        else:
+            best_chunks = keyword_chunks or []
+
+        if len(best_chunks) > 0:
+            self.logger.info('Processing best chunks')
+            self.state.target_ids = [chunk.chunk_key for chunk in best_chunks]
+            if self._retrieve_by_ids():
+                return self._generate()
+            else:
+                self.logger.warning('Error retrieving context by IDs')
+                return False
+        else:
+            self.logger.warning(similarity_chunks)
+            self.logger.warning(keyword_chunks)
+            self.logger.warning(search_strategy)
+            return False
 
     def _determine_search_strategy(self) -> Tuple[SearchStrategy, bool]:
         """Determine the best search strategy for the current question."""
@@ -152,17 +164,18 @@ class StorySageChain:
     def _get_keyword_search_results(self, strategy: SearchStrategy) -> List[Chunk]:
         """Get results using keyword-based search with the specified strategy."""
         try:
+            results_to_search = self.raptor_retriever.retrieve_all_with_filters(self.state.context_filters)
             return self.search_service.search(
                 text=self.state.question,
-                chunks=self.state.summary_chunks,
+                chunks=results_to_search,
                 strategy=strategy
             )
         except Exception as e:
             self.logger.error(f"Error in keyword search: {e}")
             return []
 
-    def _evaluate_search_results(self, similarity_chunks: List[Chunk], 
-                               keyword_chunks: List[Chunk]) -> List[Chunk]:
+    def _evaluate_search_results(self, similarity_chunks: List[Chunk] = [], 
+                               keyword_chunks: List[Chunk] = []) -> List[Chunk]:
         """Have the LLM evaluate which search results are more relevant."""
         try:
             evaluation_result, tokens = self.llm.evaluate_search_results(
@@ -174,8 +187,10 @@ class StorySageChain:
             self._add_usage(tokens)
             
             if evaluation_result.use_similarity:
+                self.logger.info('Using similarity chunks')
                 return similarity_chunks
             else:
+                self.logger.info('Using keyword chunks')
                 return keyword_chunks[:self.config.n_chunks]
         except Exception as e:
             self.logger.error(f"Error evaluating search results: {e}")
@@ -253,7 +268,7 @@ class StorySageChain:
     # Internal methods for steps in the chain
     def _get_context_filters(self) -> None:
         """Initialize context filters based on current state for document retrieval."""
-        self.logger.debug('Initializing context filters')
+        self.logger.info('Initializing context filters')
         self.state.node_history.append('GetContextFilters')
         
         # Default filters that apply to all queries
@@ -314,7 +329,7 @@ class StorySageChain:
         context_filters['top_level_only'] = self.state.needs_overview
         
         try:
-            chunks = self.raptor_retriever.retrieve_chunks(
+            chunks = self.raptor_retriever.retrieve_by_similarity(
                 query_str=self.state.search_query,
                 context_filters=context_filters,
                 n_results=25 if self.state.needs_overview else 10,
@@ -357,7 +372,7 @@ class StorySageChain:
 
     def _retrieve_by_ids(self) -> bool:
         """Retrieve context using specific chunk IDs."""
-        self.logger.debug('Retrieving context by IDs')
+        self.logger.info('Retrieving context by IDs')
         self.state.node_history.append('GetContextByIDs')
         
         # Ensure target_ids contains valid string IDs
@@ -366,9 +381,9 @@ class StorySageChain:
             return False
             
         try:
-            results = self.raptor_retriever.retrieve_from_hierarchy(self.state.target_ids)
+            results = self.raptor_retriever.retrieve_from_parents(self.state.target_ids)
             if not results:
-                self.logger.debug('No context found in hierarchy')
+                self.logger.debug('No children found from parents')
                 return False
         except Exception as e:
             self.logger.error(f'Error retrieving context by IDs: {e}')
@@ -393,7 +408,7 @@ class StorySageChain:
             context_filters['exclude_summaries'] = True
 
         try:
-            results = self.raptor_retriever.retrieve_chunks(
+            results = self.raptor_retriever.retrieve_by_similarity(
                 query_str=self.state.search_query,
                 context_filters=context_filters
             )
@@ -423,7 +438,7 @@ class StorySageChain:
         if not keywords:
             keywords = self.state.question.split()
         try:
-            results = self.raptor_retriever.get_by_keyword(
+            results = self.raptor_retriever.retrieve_by_keywords(
                 keywords=keywords,
                 context_filters=self.state.context_filters
             )
@@ -445,7 +460,7 @@ class StorySageChain:
         Returns:
             bool: True if generation was successful
         """
-        self.logger.debug('Generating response')
+        self.logger.info('Generating response')
         self.state.node_history.append('Generate')
         try:
             response_data: ResponseData
@@ -478,23 +493,17 @@ class StorySageChain:
         Returns:
             List[StorySageContext]: List of context objects sorted by chunk ID
         """
-        #self.logger.debug(f'Getting context from result: {results}')
+        self.logger.info('Processing context results')
         try:
             # Check if we have any results
             if not results:
                 self.logger.debug('No results found')
                 return []
+            
+            if not results[0].text:
+                self.logger.error('No text found in results')
         
-            return [
-                StorySageContext.from_dict(
-                    data = {
-                        'chunk_id': chunk.chunk_key, 
-                        'book_number': chunk.metadata.book_number, 
-                        'chapter_number': chunk.metadata.chapter_number, 
-                        'chunk': chunk.text
-                    } 
-                ) for chunk in results
-            ]
+            return [chunk.as_context() for chunk in results]
         except Exception as e:
             self.logger.error(f'Unexpected error processing results: {e}')
             return []
@@ -510,7 +519,7 @@ class StorySageChain:
 
     def _is_followup_question(self) -> bool:
         """Check if current question is a followup based on conversation history."""
-        self.logger.debug('Checking if question is a followup')
+        self.logger.info('Checking if question is a followup')
         if self.state.conversation:
             return len(self.state.conversation.get_history()) > 0
         else:
@@ -533,7 +542,7 @@ class StorySageChain:
             self._add_usage(tokens)
             self.logger.debug(f'Generated followup query: {query_result.query}')
             
-            result = self.raptor_retriever.retrieve_chunks(
+            result = self.raptor_retriever.retrieve_by_similarity(
                 query_str=query_result.query,
                 context_filters=self.state.context_filters
             )
@@ -553,7 +562,7 @@ class StorySageChain:
         Returns:
             bool: True if refinement was successful
         """
-        self.logger.debug('Refining followup question')
+        self.logger.info('Refining followup question')
         self.state.node_history.append('RefineFollowupQuestion')
         try:
             refined_question_result: RefinedQuestionResult
@@ -567,16 +576,7 @@ class StorySageChain:
             return True
         except Exception as e:
             self.logger.error(f'Error refining follow-up question: {e}')
-            return False
-
-    # Helper methods
-    def _setup_logger(self, log_level: int, print_logs_to_console: bool) -> logging.Logger:
-        """Configure and return a logger instance."""
-        logger = logging.getLogger(__name__)
-        logger.level = log_level
-        if print_logs_to_console:
-            logger.addHandler(logging.StreamHandler())
-        return logger
+            raise e
 
     def _generate_search_query(self) -> bool:
         """Generate an optimized search query using LLM.
