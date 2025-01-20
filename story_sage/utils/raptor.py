@@ -599,8 +599,7 @@ class RaptorProcessor:
                     for summary, metadata, embedding in results:
                         next_level.append(Chunk(summary,
                                             metadata=metadata,
-                                            embedding=embedding,
-                                            is_summary=True))
+                                            embedding=embedding))
             else: # Process sequentially
 
                 for cluster_idx, chunk_keys in enumerate(summary_chunks_to_build):
@@ -619,8 +618,7 @@ class RaptorProcessor:
                     summary = self._generate_summary(summary_text)
                     next_level.append(Chunk(summary,
                                             metadata=cluster_metadata,
-                                            embedding=self.chunker.model.encode(summary),
-                                            is_summary=True))
+                                            embedding=self.chunker.model.encode(summary)))
                 #print(f"Finished creating level {level + 1} clusters for book {book_number}, chapter {chapter_num}")
             
             # Update relationships and book_tree
@@ -892,7 +890,6 @@ class RaptorProcessor:
                             Chunk(
                                 text=chunk_data["text"],
                                 metadata=chunk_data["metadata"],
-                                is_summary=chunk_data["is_summary"],
                                 embedding=np.array(chunk_data["embedding"]) if chunk_data["embedding"] is not None else None
                             ) for chunk_data in level_data
                         ]

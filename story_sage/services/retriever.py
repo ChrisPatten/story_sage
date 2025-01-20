@@ -425,9 +425,9 @@ class StorySageRetriever:
                         documents.append(str.lower(chunk.text))
                         
                         # Prepare metadata
-                        metadata = chunk.metadata.__dict__.copy()
+                        metadata = {}
                         metadata['book_filename'] = book_filename
-                        metadata['is_summary'] = chunk.is_summary
+                        metadata['is_summary'] = len(chunk.children) == 0
                         metadata['parents'] = ','.join(chunk.parents)
                         metadata['children'] = ','.join(chunk.children)
                         metadata['full_chunk'] = chunk.text
@@ -439,6 +439,12 @@ class StorySageRetriever:
                     
                     if not ids:  # Skip if no new chunks to add
                         continue
+
+                    for metadata in metadatas:
+                        if any(value is None for value in metadata.values()):
+                            _ = metadata.pop('full_chunk', None)
+                            self.logger.error(f"Missing metadata in chunk: {metadata}")
+                            raise ValueError("Missing metadata in chunk")
                         
                     # Add to collection with or without embeddings
                     try:
