@@ -1,7 +1,9 @@
 """Text analysis and hierarchical clustering module for story processing.
 
-This module implements a hierarchical text analysis system that processes books 
-through multiple levels using the StorySage infrastructure. It combines:
+This module implements the RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval) system, 
+a hierarchical text analysis pipeline that processes books at multiple levels using clustering and summarization.
+It combines multiple components:
+
 - StorySageConfig for configuration management
 - StorySageChunker for text segmentation
 - UMAP for dimensionality reduction
@@ -19,36 +21,27 @@ Key Features:
 Example:
     ```python
     # Initialize with StorySageConfig
-    config_path = "config.yaml"  # Contains OpenAI keys, Redis settings, etc.
+    config_path = "config.yaml"  
     processor = RaptorProcessor(
         config_path=config_path,
         model_name="gpt-4o-mini",
         chunk_size=1000,
         chunk_overlap=50,
-        clustering_threshold=0.5,
-        metric='cosine'
+        clustering_threshold=0.5,  
     )
     
     # Process a book or series
     results = processor.process_texts(
-        "path/to/books/*.txt",  # Glob pattern supported
+        "path/to/books/*.txt",  
         number_of_levels=3
     )
     
     # Access the hierarchical results 
     for book_path, book_data in results.items():
-        # Each chapter contains multiple analysis levels
         for chapter_key, chapter_data in book_data.items():
-            # Level 1: Original chunks
-            original_chunks = chapter_data['level_1']
-            
-            # Level 2: First-level summaries 
-            summaries = chapter_data['level_2']
-            
-            # Example: Print a summary's metadata and children
+            summaries = chapter_data['level_2']  # First-level summaries
             for summary in summaries:
-                print(f"Summary: {summary.text[:100]}...")
-                print(f"Metadata: {summary.metadata.__dict__}")
+                print(f"Summary chunk key: {summary.chunk_key}")
                 print(f"Summarizes chunks: {summary.children}")
     ```
 
@@ -62,13 +55,12 @@ Dependencies:
 
 Notes:
     - Requires valid OpenAI API key in config.yaml
-    - Large texts are processed in chunks to manage memory
+    - Large texts are processed in chapters to manage memory
     - Uses cosine similarity by default for text embeddings
-    - Supports various UMAP metrics for different use cases
 """
 
 from .chunker import StorySageChunker
-from ..models import StorySageConfig
+from ..models import StorySageConfig, Chunk, ChunkMetadata
 from openai import OpenAI
 import httpx
 import os
@@ -91,116 +83,7 @@ UMAPMetric = Literal['euclidean', 'manhattan', 'chebyshev', 'minkowski', 'canber
 
 ModelName = Literal['gpt-4o-mini', 'gpt-4o', 'gpt-o1-mini', 'gpt-o1', 'gpt-3.5-turbo', 'gpt-3.5']
 
-class ChunkMetadata:
-    """Container for metadata associated with a text chunk.
-    
-    Attributes:
-        book_number (int): Sequential identifier for the book.
-        chapter_number (int): Chapter number within the book.
-        level (int): Hierarchy level (1=raw chunks, 2+=summaries).
-        chunk_index (int): Sequential index within the level.
-    """
-    def __init__(self, 
-                 chunk_index: int, 
-                 book_number: int = None, 
-                 chapter_number: int = None, 
-                 level: int = None):
-        self.book_number = book_number
-        self.chapter_number = chapter_number
-        self.level = level
-        self.chunk_index = chunk_index
 
-    def __to_dict__(self) -> dict:
-        return {
-            "book_number": self.book_number,
-            "chapter_number": self.chapter_number,
-            "level": self.level,
-            "chunk_index": self.chunk_index
-        }
-
-    def to_json(self) -> dict:
-        """Convert metadata to JSON-serializable dictionary."""
-        return {
-            "book_number": self.book_number,
-            "chapter_number": self.chapter_number,
-            "level": self.level,
-            "chunk_index": self.chunk_index
-        }
-
-class Chunk:
-    """Container for text data with hierarchical relationships.
-    
-    A Chunk represents either an original text segment or a summary, storing both
-    content and relationships to other chunks in the hierarchy.
-    
-    Attributes:
-        text (str): The text content.
-        metadata (ChunkMetadata): Associated metadata.
-        is_summary (bool): True if this chunk is a summary of other chunks.
-        embedding (np.ndarray): Vector representation of the text.
-        chunk_key (str): Unique identifier for this chunk.
-        parents (List[str]): Keys of parent chunks (summaries of this chunk).
-        children (List[str]): Keys of child chunks (chunks this summarizes).
-    """
-    def __init__(self, 
-                 text: str, 
-                 metadata: Union[ChunkMetadata|dict], 
-                 is_summary: bool=False,
-                 embedding: List[np.ndarray]=None):
-        
-        self.text = text
-        self.is_summary = is_summary
-        self.embedding = embedding
-        if type(metadata) == dict:
-            self.metadata = ChunkMetadata(**metadata)
-        elif type(metadata) == ChunkMetadata:
-            self.metadata = metadata
-        else:
-            raise ValueError("metadata must be a dictionary or ChunkMetadata object.")
-        
-        self.chunk_key = self._create_chunk_key()
-        self.parents: List[str] = []
-        self.children: List[str] = []
-
-    def _create_chunk_key(self) -> str:
-        """Generates a unique chunk key from the metadata in a consistent format."""
-        parts = []
-        if self.metadata.book_number is not None:
-            parts.append(f"book_{self.metadata.book_number}")
-        if self.metadata.chapter_number is not None:
-            parts.append(f"chapter_{self.metadata.chapter_number}")
-        if self.metadata.level is not None:
-            parts.append(f"level_{self.metadata.level}")
-        if self.metadata.chunk_index is not None:
-            parts.append(f"chunk_{self.metadata.chunk_index}")
-        return "|".join(parts)
-    
-    def __string__(self) -> str:
-        return f"Chunk: {self.chunk_key} * Parents: {self.parents} * Children: {self.children}" 
-    
-    def __repr__(self) -> str:
-        return self.__string__()
-    
-    def __json__(self) -> dict:
-        return {
-            "text": self.text,
-            "metadata": self.metadata.__dict__,
-            "chunk_key": self.chunk_key,
-            "parents": self.parents,
-            "children": self.children
-        }
-
-    def to_json(self) -> dict:
-        """Convert chunk to JSON-serializable dictionary."""
-        return {
-            "text": self.text,
-            "metadata": self.metadata.to_json(),
-            "is_summary": self.is_summary,
-            "embedding": self.embedding.tolist() if self.embedding is not None else None,
-            "chunk_key": self.chunk_key,
-            "parents": self.parents,
-            "children": self.children
-        }
 
 _LevelsDict: TypeAlias = Dict[str, List[Chunk]]
 """Type alias for a dictionary of levels containing chunked text data.
@@ -253,7 +136,7 @@ _ClusterChunkData: TypeAlias = Tuple[List[Chunk], List[int], int, int]
 
 _RaptorResults: TypeAlias = Dict[str, Dict[str, _LevelsDict]]
 class RaptorProcessor:
-    """Hierarchical text analysis system using clustering and summarization.
+    """Hierarchical text analysis system implementing the RAPTOR algorithm.
     
     This class implements a multi-level analysis pipeline that integrates with
     StorySage's configuration and chunking infrastructure. The pipeline:
@@ -268,30 +151,33 @@ class RaptorProcessor:
         skip_summarization: If True, skips GPT summary generation
         seed: Random seed for reproducibility 
         model_name: OpenAI model identifier
-        chunk_size: Target chunk size in characters
-        chunk_overlap: Overlap between chunks
-        clustering_threshold: Minimum probability for cluster membership
-        target_dim: Target dimensions after UMAP reduction
-        max_tokens: Maximum tokens for GPT summaries
-        n_completions: Number of summary attempts
+        chunk_size: Target chunk size in characters (default: 1000)
+        chunk_overlap: Overlap between chunks (default: 50)
+        clustering_threshold: Minimum probability for cluster membership (default: 0.5)
+        target_dim: Target dimensions after UMAP reduction (default: 10)
+        max_tokens: Maximum tokens for GPT summaries (default: 200)
+        n_completions: Number of summary attempts (default: 1)
         stop_sequence: Optional GPT stop token
-        temperature: GPT temperature setting
-        max_clusters: Maximum clusters to consider
-        metric: UMAP distance metric
-        n_init: GMM initialization attempts
+        temperature: GPT temperature setting (default: 0.7)
+        max_clusters: Maximum clusters to consider (default: 50)
+        metric: UMAP distance metric (default: 'cosine')
+        n_init: GMM initialization attempts (default: 2)
+        max_summary_threads: Max threads for summary generation (default: 1)
+        max_processes: Max processes for parallel processing (default: CPU count)
+        max_levels: Maximum hierarchy levels to generate (default: 3)
+        series_id: Optional identifier for the book series
     
     Attributes:
-        chunker: StorySageChunker instance
+        chunker: StorySageChunker instance for text segmentation
         client: OpenAI API client
         config: StorySageConfig instance
-        chunk_tree: Hierarchical results structure
+        chunk_tree: Hierarchical results structure, populated after processing
     
     Example Config YAML:
         ```yaml
         OPENAI_API_KEY: "sk-..."
         CHROMA_PATH: "./chromadb"
         CHROMA_COLLECTION: "book_embeddings"
-        CHROMA_FULL_TEXT_COLLECTION: "book_texts"
         N_CHUNKS: 5
         COMPLETION_MODEL: "gpt-3.5-turbo"
         COMPLETION_TEMPERATURE: 0.7
@@ -316,7 +202,8 @@ class RaptorProcessor:
                  n_init: int = 2,
                  max_summary_threads: int = 1,
                  max_processes: int = None,
-                 max_levels: int = 3):
+                 max_levels: int = 3,
+                 series_id: int = None):
         os.environ['TOKENIZERS_PARALLELISM'] = "false"
         self.seed = seed
         self.config_path = config_path
@@ -339,6 +226,7 @@ class RaptorProcessor:
         self.skip_summarization = skip_summarization
         self.max_summary_threads = max_summary_threads
         self.max_levels = max_levels
+        self.series_id = series_id
         
         self.max_processes = max_processes or cpu_count()
         
@@ -570,12 +458,20 @@ class RaptorProcessor:
         """
         chunk_list, chunk_keys, cluster_idx, level = cluster_data
     
-        # Set the metadata
+        # Set the metadata - use average position of constituent chunks for summaries
+        book_positions = [chunk.metadata.book_position 
+                         for chunk in chunk_list 
+                         if chunk.chunk_key in chunk_keys 
+                         and chunk.metadata.book_position is not None]
+        avg_position = sum(book_positions) / len(book_positions) if book_positions else None
+        
         cluster_metadata = {
+            "series_id": chunk_list[0].metadata.series_id if hasattr(chunk_list[0].metadata, 'series_id') else None,
             "book_number": chunk_list[0].metadata.book_number,
             "chapter_number": chunk_list[0].metadata.chapter_number,
             "level": level + 1,
-            "chunk_index": cluster_idx
+            "chunk_index": cluster_idx,
+            "book_position": round(avg_position, 4) if avg_position is not None else None
         }
         
         # Collect and summarize texts
@@ -698,8 +594,7 @@ class RaptorProcessor:
                     for summary, metadata, embedding in results:
                         next_level.append(Chunk(summary,
                                             metadata=metadata,
-                                            embedding=embedding,
-                                            is_summary=True))
+                                            embedding=embedding))
             else: # Process sequentially
 
                 for cluster_idx, chunk_keys in enumerate(summary_chunks_to_build):
@@ -718,8 +613,7 @@ class RaptorProcessor:
                     summary = self._generate_summary(summary_text)
                     next_level.append(Chunk(summary,
                                             metadata=cluster_metadata,
-                                            embedding=self.chunker.model.encode(summary),
-                                            is_summary=True))
+                                            embedding=self.chunker.model.encode(summary)))
                 #print(f"Finished creating level {level + 1} clusters for book {book_number}, chapter {chapter_num}")
             
             # Update relationships and book_tree
@@ -752,7 +646,7 @@ class RaptorProcessor:
                 print(f"Finished processing {chapter_key} for book {book_tree['shared_tree_key']}")
             return chunks
 
-    def _get_chunks_from_filepath(self, file_path: Union[str, List[str]]) -> OrderedDict[str, list[list[Chunk]]]:
+    def _get_chunks_from_filepath(self, file_path: Union[str, List[str]], series_id: int = None) -> OrderedDict[str, list[list[Chunk]]]:
         """Loads and chunks text files into a hierarchical structure.
 
         Processes one or more text files matching the given path pattern,
@@ -761,6 +655,7 @@ class RaptorProcessor:
         Args:
             file_path (str): Glob pattern matching text files to process
                 (e.g., './books/*.txt')
+            series_id (int, optional): ID of the series being processed. Defaults to self.series_id.
 
         Returns:
             OrderedDict[str, list[list[Chunk]]] : Hierarchical structure where:
@@ -781,27 +676,51 @@ class RaptorProcessor:
             >>> print(f"First book has {len(first_book)} chapters")
             First book has 12 chapters
         """
+        series_id = series_id or self.series_id
         chunked_text: OrderedDict[str, list[list[Chunk]]] = {}
         input_text = self.chunker.read_text_files(file_path)
         if len(input_text) < 1:
             raise ValueError(f"No text found in file path {file_path}")
         for book_filename, book_info in sorted(input_text.items()):
             chunked_text[book_filename] = []
+            
+            # Calculate total book length for position tracking
+            total_book_length = sum(len(chapter.full_text) for chapter in book_info.chapters.values())
+            current_position = 0
+            
             for chapter_num, chapter_data in book_info.chapters.items():
                 chunks = self.chunker.sentence_splitter(
                     chapter_data.full_text, 
                     chunk_size=self.chunk_size, 
                     chunk_overlap=self.chunk_overlap
                 )
+                
                 chunk_list = []
                 for idx, text in enumerate(chunks):
-                    chunk_metadata = {"book_number": book_info.book_number, "chapter_number": chapter_num, "level": 1, "chunk_index": idx}
+                    # Update position counter with chunk length
+                    current_position += len(text)
+                    if idx < len(chunks) - 1:  # For all chunks except the last one in this chapter
+                        # Subtract overlap to avoid double counting
+                        current_position -= self.chunk_overlap
+                    
+                    chunk_metadata = {
+                        "series_id": series_id,
+                        "book_number": book_info.book_number,
+                        "chapter_number": chapter_num,
+                        "level": 1,
+                        "chunk_index": idx,
+                        "book_position": round(current_position / total_book_length, 4)
+                    }
                     chunk_list.append(Chunk(text, metadata=chunk_metadata))
+                    
                 chunked_text[book_filename].append(chunk_list)
         return chunked_text
 
-    def process_texts(self, file_path: Union[str, List[str]], max_levels: int = None, 
-                      max_processes: int = None, max_summary_threads: int = None
+    def process_texts(self, file_path: Union[str, List[str]], 
+                      series_id: int = None,
+                      max_levels: int = None, 
+                      max_processes: int = None, 
+                      max_summary_threads: int = None
                      ) -> _RaptorResults:
         """Process text files into a multi-level hierarchical summary structure.
 
@@ -813,6 +732,7 @@ class RaptorProcessor:
 
         Args:
             file_path (str): Glob pattern matching text files to process
+            series_id (int, optional): ID of the series being processed. Defaults to self.series_id.
             max_levels (int, optional): Override default max hierarchy levels
             max_processes (int, optional): Override default process pool size
             max_summary_threads (int, optional): Override default summary thread count
@@ -846,6 +766,7 @@ class RaptorProcessor:
             Processed 2 books
         """
         
+        series_id = series_id or self.series_id
         self.chunk_tree: _RaptorResults = {}
 
         # Overwrite default values if provided in this method call
@@ -857,7 +778,7 @@ class RaptorProcessor:
             self.max_summary_threads = max_summary_threads
 
         with Manager() as manager:
-            chunked_text = self._get_chunks_from_filepath(file_path)
+            chunked_text = self._get_chunks_from_filepath(file_path, series_id)
             if len(chunked_text) < 1:
                 raise ValueError("No text found in the provided file path.")
             
@@ -879,16 +800,31 @@ class RaptorProcessor:
         return self.chunk_tree
 
     def save_chunk_tree(self, output_path: str, compress: bool = True) -> None:
-        """Save each book in the chunk tree to a separate JSON file, optionally compressed.
+        """Save the processed chunk tree to JSON files.
 
-        The output filename will include the book number from the first chunk's metadata.
+        Creates separate files for each book in the tree, with optional compression.
+        The output filename will include the book number from the chunk metadata.
         Example: For output_path 'data.json' and book_number 1, creates 'data_1.json'
-        Each file maintains the original book_filename as the top-level key for compatibility.
 
         Args:
-            output_path (str): Base path where to save the files
-            compress (bool, optional): Whether to use gzip compression. Defaults to True.
-                                    If True, '.gz' extension will be added if not present.
+            output_path: Base path where to save the files
+            compress: Whether to use gzip compression (adds .gz extension)
+
+        Raises:
+            ValueError: If process_texts() hasn't been called yet
+
+        Example:
+            ```python
+            processor = RaptorProcessor(config_path="config.yaml")
+            results = processor.process_texts("books/*.txt")
+            processor.save_chunk_tree(
+                output_path="output/processed_books.json",
+                compress=True
+            )
+            # Creates files like:
+            # - output/processed_books_1.json.gz
+            # - output/processed_books_2.json.gz
+            ```
         """
         import json
         
@@ -945,10 +881,30 @@ class RaptorProcessor:
 
     @staticmethod
     def load_chunk_tree(input_path: str) -> _RaptorResults:
-        """Load a chunk tree from a JSON file, automatically handling compression.
+        """Load a saved chunk tree from a JSON file.
+
+        Automatically detects and handles gzipped or uncompressed files.
+        Reconstructs the full chunk tree with all relationships intact.
 
         Args:
-            input_path (str): Path to the JSON file (can be .gz or uncompressed)
+            input_path: Path to the JSON file (.json or .json.gz)
+
+        Returns:
+            Complete hierarchical structure with all chunks and relationships
+
+        Example:
+            ```python
+            tree = RaptorProcessor.load_chunk_tree(
+                "output/processed_books_1.json.gz"
+            )
+            print(f"Found {len(tree)} books")
+            
+            # Access specific chunks
+            book = next(iter(tree.values()))
+            chapter1 = book['chapter_1']
+            original_chunks = chapter1['level_1']
+            summaries = chapter1['level_2']
+            ```
         """
         import json
 
@@ -964,7 +920,6 @@ class RaptorProcessor:
                             Chunk(
                                 text=chunk_data["text"],
                                 metadata=chunk_data["metadata"],
-                                is_summary=chunk_data["is_summary"],
                                 embedding=np.array(chunk_data["embedding"]) if chunk_data["embedding"] is not None else None
                             ) for chunk_data in level_data
                         ]

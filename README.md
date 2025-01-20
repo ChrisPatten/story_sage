@@ -58,36 +58,50 @@ Story Sage uses a modular architecture with Retrieval-Augmented Generation (RAG)
                          +-------------------------+
 ```
 
-### Major Components
-
-#### StorySageRetriever
-
-Handles the retrieval of relevant text chunks from the book based on user queries using ChromaDB. The basic pattern is:
-
-1. The user's question is passed to the `first_pass_query` method.
-1. The retriever builds up a where condition using the `get_where_filter` method to filter the ChromaDB query
-1. The retriever queries ChromaDB with the question and filters and returns the relevant chunks containing the summarized versions of the chunks.
-1. `StorySageChain` manages evaluating the summarized chunks to find the IDs that
-are likely to be relevant to the question.
-1. If IDs are returned, the chain fetches the full text of those chunks using the `get_by_ids` method and returns them to `StorySageChain`.
-1. If no IDs are returned, the chain sends the question to the `retrieve_chunks` method to get the full text of the chunks and returns them to `StorySageChain`.
+### Major Components 
 
 #### StorySageChain
 
-Manages the generation of responses by processing retrieved information through a language model. There are several steps in the chain:
+Manages the generation of responses through a series of processing steps:
 
-1. RouterFunction: Anayzes the question to determine if it's past or present tense and sets the sort order appropriately.
-1. GetCharacters: Searches the question for references to any characters and adds the character ids to the state.
-1. GetContextFilters: Builds a context filter object based on information in the state.
-1. GetInitialContext: Retrieves the summarized chunks returned by StorySageRetriever.
-1. IdentifyRelevantChunks: Evaluates the summarized chunks to find the IDs that are likely to be relevant to the question.
-1. GetContextByIDs: Fetches the full text of the relevant chunks if any IDs were captured.
-1. GetContext: Fetches the full text of chunks based on a naive semantic search of the summaries if no IDs were captured.
-1. Generate: Generates a response using the language model and the context.
+1. RouterFunction: Analyzes questions to determine temporal context
+2. GetCharacters: Extracts character references
+3. GetContextFilters: Builds context filters for search
+4. GetInitialContext: Retrieves chunk summaries
+5. IdentifyRelevantChunks: Evaluates summaries to find relevant content 
+6. GetContextByIds: Fetches full text of matched chunks
+7. GetContext: Falls back to semantic search if no IDs found
+8. Generate: Produces final response using language model
 
-#### StorySageState
+#### StorySageRetriever 
 
-Maintains the state of user interactions, including context and extracted entities.
+Manages access to and filtering of the vector database:
+
+1. first_pass_query: Evaluates initial user question
+2. get_where_filter: Builds ChromaDB filters
+3. Query operations return summarized chunks first
+4. get_by_ids: Retrieves full text for relevant chunks
+5. retrieve_chunks: Falls back to semantic search
+
+#### StorySageSearch
+
+Handles text search across chunks using multiple strategies:
+
+- EXACT: Direct text matching
+- PHRASE: Ordered text sequence matching 
+- PROXIMITY: Near-distance term matching
+- FUZZY: Approximate string matching
+
+Uses parallel processing and caching optimizations for performance.
+
+#### Data Models
+
+Core data structures that enable component interaction:
+
+- Chunk: Container for text content with hierarchical relationships
+- ChunkMetadata: Typed metadata about chunk position and relationships
+- Response interfaces: Structured containers for component outputs
+- Context interfaces: Query and filter parameter containers
 
 ## Installation
 
