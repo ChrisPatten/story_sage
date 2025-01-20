@@ -1,7 +1,9 @@
 """Text analysis and hierarchical clustering module for story processing.
 
-This module implements a hierarchical text analysis system that processes books 
-through multiple levels using the StorySage infrastructure. It combines:
+This module implements the RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval) system, 
+a hierarchical text analysis pipeline that processes books at multiple levels using clustering and summarization.
+It combines multiple components:
+
 - StorySageConfig for configuration management
 - StorySageChunker for text segmentation
 - UMAP for dimensionality reduction
@@ -19,36 +21,27 @@ Key Features:
 Example:
     ```python
     # Initialize with StorySageConfig
-    config_path = "config.yaml"  # Contains OpenAI keys, Redis settings, etc.
+    config_path = "config.yaml"  
     processor = RaptorProcessor(
         config_path=config_path,
         model_name="gpt-4o-mini",
         chunk_size=1000,
         chunk_overlap=50,
-        clustering_threshold=0.5,
-        metric='cosine'
+        clustering_threshold=0.5,  
     )
     
     # Process a book or series
     results = processor.process_texts(
-        "path/to/books/*.txt",  # Glob pattern supported
+        "path/to/books/*.txt",  
         number_of_levels=3
     )
     
     # Access the hierarchical results 
     for book_path, book_data in results.items():
-        # Each chapter contains multiple analysis levels
         for chapter_key, chapter_data in book_data.items():
-            # Level 1: Original chunks
-            original_chunks = chapter_data['level_1']
-            
-            # Level 2: First-level summaries 
-            summaries = chapter_data['level_2']
-            
-            # Example: Print a summary's metadata and children
+            summaries = chapter_data['level_2']  # First-level summaries
             for summary in summaries:
-                print(f"Summary: {summary.text[:100]}...")
-                print(f"Metadata: {summary.metadata.__dict__}")
+                print(f"Summary chunk key: {summary.chunk_key}")
                 print(f"Summarizes chunks: {summary.children}")
     ```
 
@@ -62,9 +55,8 @@ Dependencies:
 
 Notes:
     - Requires valid OpenAI API key in config.yaml
-    - Large texts are processed in chunks to manage memory
+    - Large texts are processed in chapters to manage memory
     - Uses cosine similarity by default for text embeddings
-    - Supports various UMAP metrics for different use cases
 """
 
 from .chunker import StorySageChunker
@@ -144,7 +136,7 @@ _ClusterChunkData: TypeAlias = Tuple[List[Chunk], List[int], int, int]
 
 _RaptorResults: TypeAlias = Dict[str, Dict[str, _LevelsDict]]
 class RaptorProcessor:
-    """Hierarchical text analysis system using clustering and summarization.
+    """Hierarchical text analysis system implementing the RAPTOR algorithm.
     
     This class implements a multi-level analysis pipeline that integrates with
     StorySage's configuration and chunking infrastructure. The pipeline:
@@ -159,30 +151,33 @@ class RaptorProcessor:
         skip_summarization: If True, skips GPT summary generation
         seed: Random seed for reproducibility 
         model_name: OpenAI model identifier
-        chunk_size: Target chunk size in characters
-        chunk_overlap: Overlap between chunks
-        clustering_threshold: Minimum probability for cluster membership
-        target_dim: Target dimensions after UMAP reduction
-        max_tokens: Maximum tokens for GPT summaries
-        n_completions: Number of summary attempts
+        chunk_size: Target chunk size in characters (default: 1000)
+        chunk_overlap: Overlap between chunks (default: 50)
+        clustering_threshold: Minimum probability for cluster membership (default: 0.5)
+        target_dim: Target dimensions after UMAP reduction (default: 10)
+        max_tokens: Maximum tokens for GPT summaries (default: 200)
+        n_completions: Number of summary attempts (default: 1)
         stop_sequence: Optional GPT stop token
-        temperature: GPT temperature setting
-        max_clusters: Maximum clusters to consider
-        metric: UMAP distance metric
-        n_init: GMM initialization attempts
+        temperature: GPT temperature setting (default: 0.7)
+        max_clusters: Maximum clusters to consider (default: 50)
+        metric: UMAP distance metric (default: 'cosine')
+        n_init: GMM initialization attempts (default: 2)
+        max_summary_threads: Max threads for summary generation (default: 1)
+        max_processes: Max processes for parallel processing (default: CPU count)
+        max_levels: Maximum hierarchy levels to generate (default: 3)
+        series_id: Optional identifier for the book series
     
     Attributes:
-        chunker: StorySageChunker instance
+        chunker: StorySageChunker instance for text segmentation
         client: OpenAI API client
         config: StorySageConfig instance
-        chunk_tree: Hierarchical results structure
+        chunk_tree: Hierarchical results structure, populated after processing
     
     Example Config YAML:
         ```yaml
         OPENAI_API_KEY: "sk-..."
         CHROMA_PATH: "./chromadb"
         CHROMA_COLLECTION: "book_embeddings"
-        CHROMA_FULL_TEXT_COLLECTION: "book_texts"
         N_CHUNKS: 5
         COMPLETION_MODEL: "gpt-3.5-turbo"
         COMPLETION_TEMPERATURE: 0.7
@@ -805,16 +800,31 @@ class RaptorProcessor:
         return self.chunk_tree
 
     def save_chunk_tree(self, output_path: str, compress: bool = True) -> None:
-        """Save each book in the chunk tree to a separate JSON file, optionally compressed.
+        """Save the processed chunk tree to JSON files.
 
-        The output filename will include the book number from the first chunk's metadata.
+        Creates separate files for each book in the tree, with optional compression.
+        The output filename will include the book number from the chunk metadata.
         Example: For output_path 'data.json' and book_number 1, creates 'data_1.json'
-        Each file maintains the original book_filename as the top-level key for compatibility.
 
         Args:
-            output_path (str): Base path where to save the files
-            compress (bool, optional): Whether to use gzip compression. Defaults to True.
-                                    If True, '.gz' extension will be added if not present.
+            output_path: Base path where to save the files
+            compress: Whether to use gzip compression (adds .gz extension)
+
+        Raises:
+            ValueError: If process_texts() hasn't been called yet
+
+        Example:
+            ```python
+            processor = RaptorProcessor(config_path="config.yaml")
+            results = processor.process_texts("books/*.txt")
+            processor.save_chunk_tree(
+                output_path="output/processed_books.json",
+                compress=True
+            )
+            # Creates files like:
+            # - output/processed_books_1.json.gz
+            # - output/processed_books_2.json.gz
+            ```
         """
         import json
         
@@ -871,10 +881,30 @@ class RaptorProcessor:
 
     @staticmethod
     def load_chunk_tree(input_path: str) -> _RaptorResults:
-        """Load a chunk tree from a JSON file, automatically handling compression.
+        """Load a saved chunk tree from a JSON file.
+
+        Automatically detects and handles gzipped or uncompressed files.
+        Reconstructs the full chunk tree with all relationships intact.
 
         Args:
-            input_path (str): Path to the JSON file (can be .gz or uncompressed)
+            input_path: Path to the JSON file (.json or .json.gz)
+
+        Returns:
+            Complete hierarchical structure with all chunks and relationships
+
+        Example:
+            ```python
+            tree = RaptorProcessor.load_chunk_tree(
+                "output/processed_books_1.json.gz"
+            )
+            print(f"Found {len(tree)} books")
+            
+            # Access specific chunks
+            book = next(iter(tree.values()))
+            chapter1 = book['chapter_1']
+            original_chunks = chapter1['level_1']
+            summaries = chapter1['level_2']
+            ```
         """
         import json
 

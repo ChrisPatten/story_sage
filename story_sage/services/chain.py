@@ -1,3 +1,30 @@
+"""Chain module for orchestrating question answering across text sources.
+
+This module implements the core chain of operations for retrieving, evaluating and 
+generating responses to questions about book content. It uses a combination of text 
+similarity, keyword search, and LLM-based evaluation to find relevant passages and 
+generate appropriate answers.
+
+Key components:
+- Question analysis and search strategy selection
+- Hybrid search using vector similarity and keywords 
+- Context evaluation and filtering
+- Response generation with spoiler avoidance
+- Conversation history handling
+
+Example:
+    >>> config = StorySageConfig.from_file('config.yml')
+    >>> state = StorySageState(
+    ...     question="Who is the main character?",
+    ...     book_number=1,
+    ...     chapter_number=1,
+    ...     series_id=1
+    ... )
+    >>> chain = StorySageChain(config, state)
+    >>> result = chain.invoke()
+    >>> print(result.answer)
+"""
+
 # Import necessary libraries and modules
 import logging
 import regex as re

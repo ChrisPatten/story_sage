@@ -1,3 +1,28 @@
+"""Search module for finding relevant text chunks using multiple search strategies.
+
+This module implements various text search algorithms including exact matching,
+phrase matching, proximity search, and fuzzy search. It supports parallelized 
+processing for improved performance on large document collections.
+
+The search strategies are:
+- EXACT: Direct word-for-word matching
+- PHRASE: Multi-word phrase matching  
+- PROXIMITY: Sliding window word co-occurrence
+- FUZZY: Approximate string matching using Levenshtein distance
+
+Example:
+    ```python
+    search = StorySageSearch(threshold=0.25, max_results=20)
+    chunks = [Chunk("some text...", metadata={})]
+    
+    # Perform exact match search
+    results = search.search("search text", chunks, strategy=SearchStrategy.EXACT)
+    
+    # Try phrase matching
+    results = search.search("specific phrase", chunks, strategy=SearchStrategy.PHRASE)
+    ```
+"""
+
 import re
 from typing import Dict, List, Optional, Tuple, Set, Generator, Union
 import logging
@@ -10,25 +35,83 @@ import numpy as np
 
 @dataclass
 class SearchResult:
+    """Container for search result data.
+    
+    Attributes:
+        chunk_id: Unique identifier for the chunk
+        content: Text content of the matched chunk
+        score: Relevance score from 0-1
+        metadata: Additional chunk metadata
+    """
     chunk_id: str
     content: str
     score: float
     metadata: Dict
 
 class SearchStrategy(Enum):
+    """Enumeration of available search strategies.
+    
+    Values:
+        EXACT: Direct word matching
+        PHRASE: Multi-word phrase matching
+        PROXIMITY: Sliding window co-occurrence
+        FUZZY: Approximate string matching
+    """
     EXACT = "exact"
     PHRASE = "phrase"
     PROXIMITY = "proximity"
     FUZZY = "fuzzy"
 
 class StorySageSearch:
+    """Search engine implementing multiple text search strategies.
+
+    This class provides methods for searching text chunks using different
+    matching algorithms. It supports exact matching, phrase matching,
+    proximity search with sliding windows, and fuzzy string matching.
+
+    Results are filtered by a relevance threshold and limited to a maximum
+    count. If a strategy finds no results, it can fall back to fuzzy search.
+
+    Attributes:
+        threshold (float): Minimum relevance score (0-1) for results
+        max_results (int): Maximum number of results to return
+        logger: Logger instance for this class
+
+    Example:
+        ```python
+        search = StorySageSearch(threshold=0.25, max_results=20)
+        chunks = [Chunk("example text", metadata={})]
+        results = search.search("query", chunks, strategy=SearchStrategy.EXACT)
+        ```
+    """
+
     def __init__(self, threshold: float = 0.25, max_results: int = 20):
+        """Initialize search engine with configurable parameters.
+
+        Args:
+            threshold: Minimum relevance score (0-1) for results. Default 0.25
+            max_results: Maximum results to return. Default 20
+        """
         self.logger = logging.getLogger(__name__)
         self.threshold = threshold
         self.max_results = max_results
 
     def search(self, text: str, chunks: List[Chunk], 
                strategy: SearchStrategy = SearchStrategy.EXACT) -> List[Chunk]:
+        """Search chunks using specified strategy.
+
+        Executes search using selected strategy and falls back to fuzzy search
+        if no results are found (unless fuzzy was the original strategy).
+
+        Args:
+            text: Search query text
+            chunks: List of Chunk objects to search
+            strategy: Search strategy to use. Default EXACT
+
+        Returns:
+            List[Chunk]: Matching chunks ordered by relevance score,
+                        limited by max_results
+        """
         self.logger.info(f'Searching for "{text}" using strategy {strategy.value}')
         result: List[Chunk] = []
         if strategy == SearchStrategy.EXACT:
@@ -173,24 +256,19 @@ class StorySageSearch:
         return result
 
     def _fuzzy_search(self, text: str, chunks: List[Chunk], threshold: float = 0.8) -> List[Chunk]:
-        """
-        Performs a fuzzy search on text chunks using keyword matching.
-        This method splits both the search text and chunk text into words and performs
-        fuzzy string matching between them. A chunk is considered a match if it contains
-        words similar enough to the search keywords based on the threshold.
+        """Perform fuzzy string matching search.
+
+        Uses parallel processing to match words using Levenshtein distance.
+        Each chunk is scored based on ratio of matching keywords.
+
         Args:
-            text (str): The search text to match against chunks
-            chunks (List[Chunk]): List of Chunk objects to search through
-            threshold (float, optional): Similarity threshold for fuzzy matching. Defaults to 0.8.
-                Must be between 0 and 1, where 1 requires exact matches.
+            text: Search query text
+            chunks: List of Chunk objects to search
+            threshold: Minimum string similarity (0-1). Default 0.8
+
         Returns:
-            List[Chunk]: A sorted list of matching Chunk objects, ordered by relevance score.
-                The score is calculated as (number of keyword matches) / (total keywords).
-                Each returned Chunk has metadata.match_type set to "fuzzy" and 
-                metadata.threshold set to the used threshold value.
-        Note:
-            The actual string similarity comparison is performed by the _similar_enough() 
-            method which is implemented separately.
+            List[Chunk]: Matching chunks ordered by score, filtered by
+                class threshold and limited by max_results
         """
         if not text or not chunks:
             return []
@@ -213,19 +291,30 @@ class StorySageSearch:
         
         return [result[0] for result in valid_results]
 
-    def _extract_phrases(self, text: str) -> List[str]:
-        # Simple phrase extraction - could be enhanced with NLP
+    @staticmethod
+    def _extract_phrases(text: str) -> List[str]:
+        """Extract multi-word phrases from text.
+
+        Finds quoted phrases and word groups of 2-4 words.
+
+        Args:
+            text: Input text to extract phrases from
+
+        Returns:
+            List[str]: Extracted phrases
+        """
         return [p.strip() for p in re.findall(r'"([^"]*)"|\b\w+(?:\s+\w+){1,3}', text)]
 
     def _similar_enough(self, s1: str, s2: str, threshold: float) -> bool:
-        """
-        Check if two strings are similar enough using Levenshtein distance.
+        """Check if strings are similar using Levenshtein distance.
+
         Args:
-            s1 (str): First string to compare
-            s2 (str): Second string to compare
-            threshold (float): Similarity threshold between 0 and 1
+            s1: First string to compare
+            s2: Second string to compare  
+            threshold: Minimum similarity score (0-1)
+
         Returns:
-            bool: True if strings are similar enough, False otherwise
+            bool: True if normalized distance is >= threshold
         """
         if len(s1) == 0 or len(s2) == 0:
             return False
@@ -253,20 +342,38 @@ class StorySageSearch:
         return similarity >= threshold
     
     def _get_ids_and_docs(self, chunks: List[Chunk]) -> Generator[Tuple[str, str, Dict[str, Union[str, int]]], None, None]:
+        """Generate tuples of chunk data.
+
+        Args:
+            chunks: List of Chunk objects
+
+        Yields:
+            Tuple containing (id, document, metadata) for each chunk
+        """
         yield zip(chunks['ids'][0], chunks['documents'][0], chunks['metadatas'][0])
 
     @lru_cache(maxsize=1000)
     def _tokenize_and_normalize(self, text: str) -> Set[str]:
-        """Cache tokenization results"""
+        """Tokenize and normalize text with caching.
+
+        Splits text into lowercase words.
+
+        Args:
+            text: Input text to tokenize
+
+        Returns:
+            Set[str]: Normalized tokens
+        """
         return set(text.lower().split())
     
     def _process_chunk(self, args: tuple) -> Tuple[Chunk, float]:
-        """
-        Process a single chunk for keyword matching.
+        """Process single chunk for parallel fuzzy search.
+
         Args:
-            args (tuple): Tuple containing (chunk, keywords, threshold, similar_enough_func)
+            args: Tuple of (chunk, keywords, threshold, similar_enough_func)
+
         Returns:
-            Tuple[Chunk, float]: Tuple of (chunk, score)
+            Tuple[Chunk, float]: Processed chunk and its relevance score
         """
         chunk, keywords, threshold, similar_enough_func = args
         

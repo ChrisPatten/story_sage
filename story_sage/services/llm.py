@@ -1,38 +1,40 @@
-"""StorySageLLM: A wrapper for OpenAI's API to handle conversational document Q&A.
+"""OpenAI API wrapper for document-based question answering and text analysis.
 
-This class provides methods to generate responses, identify relevant document chunks,
-and extract keywords from questions using OpenAI's chat completion API.
+This module provides a unified interface for generating responses, evaluating text relevance,
+and managing conversations using OpenAI's chat completion API. It supports:
+
+- Response generation with context awareness
+- Document chunk evaluation and scoring
+- Keyword extraction and query refinement
+- Temporal query analysis
+- Search strategy determination
+- Conversation history integration
 
 Example:
-    config = StorySageConfig(
-        openai_api_key="your-api-key",
-        prompts={...},
-        completion_model="gpt-4",
-        completion_temperature=0.7,
-        completion_max_tokens=1000
-    )
-    
+    ```python
+    config = StorySageConfig.from_file('config.yml')
     llm = StorySageLLM(config)
-    
-    # Generate a response
-    context = [StorySageContext(
-        chunk_id="b1_ch1_001",
-        book_number=1,
-        chapter_number=1,
-        chunk="It was the best of times, it was the worst of times..."
-    )]
-    response, has_answer, follow_up = llm.generate_response(
-        context=context,
-        question="What is mentioned in the document?"
+
+    # Generate a response with context
+    response, tokens = llm.generate_response(
+        context=[StorySageContext(...)],
+        question="What happens in chapter 1?"
     )
-    # Response: "The document mentions...", True, "Would you like to know more?"
-    
-    # Identify relevant chunks
-    chunks, query = llm.identify_relevant_chunks(
-        context={"chunk1": "Summary 1", "chunk2": "Summary 2"},
-        question="Find relevant information"
+    print(f"Answer: {response.response}")
+    print(f"Tokens used: {tokens}")
+
+    # Evaluate document chunks
+    result, tokens = llm.evaluate_chunks(
+        context={"chunk1": "text...", "chunk2": "text..."},
+        question="Who is the main character?"
     )
-    # Result: ["chunk1"], "refined search query"
+    print(f"Relevant chunks: {[c['chunk_id'] for c in result.chunk_scores]}")
+    ```
+
+Dependencies:
+    - openai: API access and response parsing
+    - pydantic: Data validation and serialization
+    - httpx: HTTP client for API calls
 """
 
 from openai import OpenAI, BadRequestError
@@ -52,26 +54,42 @@ from dataclasses import dataclass
 from .search import SearchResult, SearchStrategy
 
 _UsageType: TypeAlias = Tuple[int, int]
-"""Type alias for usage information tuple containing:
-    completion_tokens: Number of tokens in the generated completion
-    prompt_tokens: Number of tokens in the prompt
+"""Token usage information for API calls.
+
+Attributes:
+    completion_tokens (int): Tokens used in the generated completion
+    prompt_tokens (int): Tokens used in the input prompt
 """
 
 class StorySageLLM:
-    """A class to handle LLM operations for document Q&A using OpenAI's API.
-    
+    """Interface for OpenAI API operations in document Q&A scenarios.
+
+    This class handles all interactions with OpenAI's API including response generation,
+    chunk evaluation, query refinement, and search strategy determination. It manages
+    prompt construction, response parsing, and error handling.
+
     Args:
-        config (StorySageConfig): Configuration object containing API keys, prompts, and model settings
-        log_level (int, optional): Logging level. Defaults to logging.INFO
-    
+        config (StorySageConfig): Configuration containing API credentials,
+            model settings, and prompt templates
+
     Attributes:
-        config (StorySageConfig): Stored configuration object
+        config (StorySageConfig): Stored configuration
         prompts (dict): Prompt templates from config
         client (OpenAI): OpenAI client instance
-        logger (Logger): Logger instance for the class
+        logger (Logger): Class logger with emoji formatting
+
+    Example:
+        ```python
+        llm = StorySageLLM(config)
+        response, tokens = llm.generate_response(
+            context=[context_obj],
+            question="What happens next?"
+        )
+        ```
     """
     
     def __init__(self, config: StorySageConfig):
+        """Initialize the LLM interface with configuration."""
         self.config = config
         self.prompts = config.prompts
         self.client = OpenAI(api_key=config.openai_api_key, http_client=httpx.Client(verify=False))
@@ -83,26 +101,30 @@ class StorySageLLM:
         self.logger.debug("API configuration complete")
 
     def generate_response(self, context: List[StorySageContext], question: str, 
-                          conversation: StorySageConversation = None,
-                          model: str = None, **kwargs) -> Tuple[ResponseData, _UsageType]:
-        """Generates a response based on the provided context and question.
+                          conversation: Optional[StorySageConversation] = None,
+                          model: Optional[str] = None, **kwargs) -> Tuple[ResponseData, _UsageType]:
+        """Generate a natural language response to a question using provided context.
+
+        Constructs a response by analyzing the question against provided context chunks,
+        incorporating conversation history if available. Handles response formatting,
+        answer validation, and follow-up suggestion generation.
 
         Args:
-            context (List[StorySageContext]): List of context objects containing relevant document content
-            question (str): User's question to be answered
-            conversation (StorySageConversation, optional): Previous conversation history. Defaults to None
-            model (str, optional): OpenAI model to use. Defaults to config's model
+            context: List of relevant text chunks with metadata
+            question: User's question to answer
+            conversation: Optional conversation history for context
+            model: Optional override for OpenAI model
             **kwargs: Additional arguments passed to OpenAI API
 
         Returns:
-            Tuple[ResponseData, _UsageType]: Contains:
-                - response: Generated answer text
-                - has_answer: Boolean indicating if an answer was found
-                - follow_up: Suggested follow-up question
-                - tokens: Number of tokens used in the turn
+            Tuple containing:
+                - ResponseData with response text, validity flag, and follow-up
+                - Token usage counts for completion and prompt
 
         Raises:
-            Exception: If OpenAI API call fails
+            ValidationError: If response fails validation
+            BadRequestError: If OpenAI API request is invalid
+            Exception: For other API or processing errors
         """
         
         self.logger.info("Generating response for question: '%s'", question[:100])

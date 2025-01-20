@@ -1,7 +1,7 @@
 # %%
 from story_sage import StorySageConfig, StorySageRetriever
 from story_sage.utils import Embedder
-from story_sage.utils.raptor import RaptorProcessor, Chunk, _RaptorResults
+from story_sage.services.raptor import RaptorProcessor, Chunk, _RaptorResults
 import argparse
 from openai import OpenAI
 import yaml

@@ -9,7 +9,7 @@ from chromadb import Documents, EmbeddingFunction, Embeddings
 from chromadb.api import Collection
 from chromadb.api.types import GetResult, QueryResult
 from story_sage.models import Chunk, StorySageConfig, ContextFilters
-from story_sage.utils.raptor import _RaptorResults, RaptorProcessor
+from story_sage.services.raptor import _RaptorResults, RaptorProcessor
 from copy import copy
 
 
@@ -19,21 +19,16 @@ class StorySageEmbedder(EmbeddingFunction):
     This class provides an interface to encode text documents into vector representations
     using a SentenceTransformer model. Each document's embedding can then be used for
     similarity searches against other text embeddings.
+    
+    Attributes:
+        model: SentenceTransformer instance used for generating embeddings
+        device: torch.device for model computation (GPU/CPU)
+        logger: Logger instance for debugging
 
-    Example usage:
-        embedder = StorySageEmbedder(model_name='all-MiniLM-L6-v2')
-        embeddings = embedder(["This is a sample text.", "Another text snippet."])
-        # embeddings: [[...], [...]] (lists of float values)
-
-    Example result:
-        [
-            [
-                -0.0072062592, 0.01234567, ... (embedding vector)
-            ],
-            [
-                0.008765459, -0.0212345, ... (embedding vector)
-            ]
-        ]
+    Example:
+        embedder = StorySageEmbedder()
+        embeddings = embedder(["This is a sample text."])
+        # Returns: List[List[float]] representing document embeddings
     """
 
     def __init__(self, model_name: str = 'sentence-transformers/all-mpnet-base-v1', *args, **kwargs):
@@ -71,37 +66,24 @@ class StorySageEmbedder(EmbeddingFunction):
         return embeddings
 
 class StorySageRetriever:
-    """Retrieves relevant text chunks from a vector store based on the user's query.
+    """Main retriever class for finding relevant text chunks using vector similarity.
 
-    This class is responsible for interacting with a ChromaDB vector store to
-    find relevant text chunks for a given query. It filters based on various
-    metadata (such as book number, chapter number, series ID, etc.) to narrow
-    down the most contextually relevant matches.
+    Manages interactions with ChromaDB to store and query text chunks using vector similarity search.
+    Supports filtering by metadata, hierarchical chunk relationships, and various retrieval strategies.
 
-    Example usage:
-        retriever = StorySageRetriever(
-            chroma_path='/path/to/chroma',
-            chroma_collection_name='my_collection',
-            n_chunks=5
-        )
-        results = retriever.retrieve_chunks(
-            query_str='What is the significance of the lost sword?',
-            context_filters={
-                'book_number': 2,
-                'chapter_number': 15,
-                'series_id': 1,
-                'entities': ['some_character_id']
-            }
-        )
+    Attributes:
+        embedder (StorySageEmbedder): Embedding function for text vectorization
+        chroma_client (chromadb.Client): Client for ChromaDB operations
+        vector_store (chromadb.Collection): Collection storing chunks and vectors
+        n_chunks (int): Default number of chunks to retrieve per query
+        logger (logging.Logger): Logger for debugging information
 
-    Example result:
-        [
-            {
-                'documents': ['The lost sword belonged to ...'],
-                'metadatas': [{'book_number': 1, 'chapter_number': 10, ...}]
-            },
-            ...
-        ]
+    Args:
+        config (StorySageConfig, optional): Configuration object with ChronaDB settings
+        chroma_path (str, optional): Path to ChromaDB storage
+        chroma_collection_name (str, optional): Name of ChromaDB collection
+        n_chunks (int, optional): Default chunks to retrieve per query (default: 5)
+        logger (logging.Logger, optional): Custom logger instance
     """
 
     def __init__(self, config: StorySageConfig = None, 
@@ -148,17 +130,25 @@ class StorySageRetriever:
         # Initialize the logger for this module
         self.logger = logger or logging.getLogger(__name__)
 
-    def retrieve_by_similarity(self, query_str, context_filters: ContextFilters, n_results: int = None, sort_order: str = None) -> List[Chunk]:
-        """Retrieves text chunks relevant to the query and context.
+    def retrieve_by_similarity(self, query_str: str, context_filters: ContextFilters, 
+                             n_results: Optional[int] = None, 
+                             sort_order: Optional[str] = None) -> List[Chunk]:
+        """Retrieves text chunks relevant to a query using vector similarity search.
 
         Args:
-            query_str (str): The user's query string
-            context_filters (dict): Filters to narrow down the search scope
-            n_results (int, optional): Number of results to return
-            sort_order (str, optional): How to sort results:
+            query_str: User query to find similar chunks for
+            context_filters: Filtering criteria for chunk selection
+            n_results: Number of chunks to retrieve (default: self.n_chunks)  
+            sort_order: How to order results:
                 - 'chronological': Sort by book/chapter ascending
                 - 'reverse_chronological': Sort by book/chapter descending
-                - None: Sort by similarity score (default)
+                - None: Sort by similarity score
+
+        Returns:
+            List of Chunk objects containing matching text and metadata
+
+        Raises:
+            Exception: If chunk conversion fails
         """
         # Log the incoming query and filters for debugging
         self.logger.info(f"Retrieving chunks by similarity for query: {query_str}")
@@ -202,7 +192,17 @@ class StorySageRetriever:
         return results
     
     def retrieve_all_with_filters(self, context_filters: Union[ContextFilters, dict]) -> List[Chunk]:
-        """Retrieves text chunks containing specific keywords within given context."""
+        """Retrieves all chunks matching the given filters without similarity search.
+
+        Args:
+            context_filters: ContextFilters object or dict with filter criteria
+
+        Returns:
+            List of matching Chunk objects
+
+        Raises:
+            Exception: If retrieval or chunk conversion fails
+        """
         # Convert dict to ContextFilters if needed
         if not isinstance(context_filters, ContextFilters):
             context_filters = ContextFilters(**context_filters)
@@ -223,13 +223,19 @@ class StorySageRetriever:
             return []
         
     def retrieve_from_parents(self, parent_ids: List[str]) -> List[Chunk]:
-        """Finds the ultimate children of the provided parent IDs.
+        """Recursively retrieves leaf node chunks starting from given parent IDs.
+
+        Traverses the chunk hierarchy to find ultimate children (leaf nodes) of the
+        provided parent chunks.
 
         Args:
-            parent_ids (List[str]): List of parent IDs to start the search from.
+            parent_ids: List of parent chunk IDs to start search from
 
         Returns:
-            List[Chunk]: A list of Chunks containing the ultimate children.
+            List of leaf node Chunk objects descended from parents
+
+        Raises:
+            Exception: If hierarchy traversal fails
         """
         self.logger.debug(f"Retrieving ultimate children from parent IDs: {parent_ids}")
         
@@ -267,7 +273,16 @@ class StorySageRetriever:
             return []
 
     def _get_where_filter(self, context_filters: ContextFilters) -> dict:
-        """Constructs a filter dictionary for ChromaDB queries."""
+        """Builds ChromaDB filter dictionary from context filters.
+
+        Internal method to convert ContextFilters into ChromaDB where clause format.
+
+        Args:
+            context_filters: Filter criteria to convert
+
+        Returns:
+            Dict containing ChromaDB-compatible where conditions
+        """
         def _safe_add_and(filter: dict, new_item: dict) -> dict:
             if ('$and' in filter.keys()):
                 filter['$and'].append(new_item)
@@ -360,25 +375,19 @@ class StorySageRetriever:
         return list(children_ids)
 
     def load_processed_files(self, chunk_tree: Union[_RaptorResults, str], 
-                             series_id: int) -> None:
-        """Loads processed files from RaptorProcessor into the vector store.
+                           series_id: int) -> None:
+        """Loads processed text chunks into the vector store.
 
-        Takes the output from RaptorProcessor's process_texts() method or a JSON file path
-        and inserts all chunks into the ChromaDB collection, preserving embeddings 
-        and metadata.
+        Takes output from RaptorProcessor or a serialized chunk tree file and stores
+        chunks in ChromaDB with their embeddings and metadata.
 
         Args:
-            chunk_tree: Either:
-                - _RaptorResults: Direct output from RaptorProcessor
-                - str: Path to JSON or JSON.gz file
+            chunk_tree: RaptorProcessor results or path to JSON/JSON.gz file
+            series_id: Identifier for the book series
 
-        Example:
-            >>> processor = RaptorProcessor('config.yaml')
-            >>> results = processor.process_texts('./books/*.txt')
-            >>> retriever = StorySageRetriever()
-            >>> retriever.load_processed_files(results)  # From RaptorResults
-            >>> retriever.load_processed_files('chunks.json.gz')  # From compressed JSON
-            >>> retriever.load_processed_files('chunks.json')  # From JSON file
+        Raises:
+            ValueError: If chunk metadata is incomplete
+            Exception: If chunk insertion fails
         """
         self.logger.debug("Loading processed files into vector store")
         
